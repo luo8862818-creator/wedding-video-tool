@@ -151,3 +151,10 @@ h2 { margin: 0; font-size: 17px; font-weight: 650; }
 .history-meta b{color:#66584a}
 .history-error{margin-top:6px;color:#a34e45;font-size:9px;line-height:1.5;overflow-wrap:anywhere}
 .history-empty{padding:12px;border-radius:7px;color:#a39a8e;background:#f8f6f2;font-size:10px;line-height:1.6}
+
+/* 自动检测网页播放时长 */
+.duration-input-row{display:flex;align-items:center;gap:8px}
+.duration-input-row input{flex:1;min-width:0}
+.duration-input-row .secondary-button{height:44px;min-width:92px}
+.duration-input-row .secondary-button:disabled{opacity:.55;cursor:wait}
+#duration-analysis{min-height:15px;color:#8f8579;font-size:10px;line-height:1.5}
