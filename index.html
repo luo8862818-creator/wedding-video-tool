@@ -92,9 +92,16 @@
               <span class="panel-kicker">OUTPUT PREVIEW</span>
               <h2>成片预览</h2>
             </div>
-            <div class="preview-meta">
-              <span class="preview-meta-chip">输出尺寸 <strong id="resolution-label">1080 × 1920</strong></span>
-              <span class="preview-meta-chip">输出格式 <strong>MP4</strong></span>
+            <div class="preview-head-tools">
+              <div class="preview-meta">
+                <span class="preview-meta-chip">输出尺寸 <strong id="resolution-label">1080 × 1920</strong></span>
+                <span class="preview-meta-chip">输出格式 <strong>MP4</strong></span>
+              </div>
+              <div class="preview-controls">
+                <span id="preview-status" class="preview-status">等待导入</span>
+                <button id="reload-preview" class="preview-tool-button" type="button" disabled>刷新预览</button>
+                <button id="open-preview" class="preview-tool-button" type="button" disabled>新窗口</button>
+              </div>
             </div>
           </div>
 
@@ -113,6 +120,16 @@
               <div class="poster-bottomline"><span>TOGETHER WITH LOVE</span><span>♥</span></div>
               <span class="preview-size">9:16</span>
             </div>
+
+            <iframe
+              id="invitation-preview"
+              class="invitation-preview"
+              title="婚礼邀请函实时预览"
+              allow="autoplay; fullscreen"
+              loading="eager"
+              referrerpolicy="no-referrer"
+              hidden
+            ></iframe>
 
             <section id="result-panel" class="result-panel" hidden>
               <div class="result-panel-heading">
