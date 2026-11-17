@@ -39,9 +39,13 @@ async function requestJson(url,options={}){
 }
 async function uploadBinary(url,file){
  const response=await fetch(url,{method:"PUT",headers:{"Content-Type":"application/octet-stream"},body:file});
+ const responseText=await response.text();
  let data={};
- try{data=await response.json();}catch(_){}
- if(!response.ok)throw new Error(data.error||"上传文件失败");
+ try{data=responseText?JSON.parse(responseText):{};}catch(_){}
+ if(!response.ok){
+  const detail=data.error||responseText.slice(0,240)||("HTTP "+response.status);
+  throw new Error(detail);
+ }
  return data;
 }
 async function createWorkspace(){
@@ -50,6 +54,9 @@ async function createWorkspace(){
 }
 async function completeWorkspace(id){
  return requestJson("/api/workspaces/"+encodeURIComponent(id)+"/complete",{method:"POST"});
+}
+async function deleteWorkspace(id){
+ return requestJson("/api/workspaces/"+encodeURIComponent(id),{method:"DELETE"});
 }
 function clearProjectLabels(){
  $("#html-file-name").textContent="尚未选择 HTML 文件";
@@ -99,14 +106,16 @@ singleHtmlInput.addEventListener("change",async()=>{
  $("#folder-name").textContent="未选择项目文件夹";
  $("#music-name").textContent="未选择音乐";
  showMessage("正在导入单个 HTML 文件……");
+ let id=null;
  try{
-  const id=await createWorkspace();
+  id=await createWorkspace();
   await uploadBinary("/api/workspaces/"+encodeURIComponent(id)+"/file?path=index.html",file);
   await completeWorkspace(id);
   workspaceId=id;
   $("#html-file-name").textContent=file.name+" · 导入完成";
   showMessage("HTML 文件导入成功。单文件模式不包含它引用的外部图片、字体、CSS 或 JS；如果网页依赖这些资源，请改用完整文件夹导入。","success");
  }catch(error){
+  if(id)await deleteWorkspace(id).catch(()=>{});
   workspaceId=null;$("#html-file-name").textContent=file.name+" · 导入失败";
   showMessage(error.message,"error");
  }finally{
@@ -115,21 +124,76 @@ singleHtmlInput.addEventListener("change",async()=>{
  }
 });
 
+const ignoredUploadDirs=new Set([
+ ".git","node_modules","output","workspaces","temp","frames",
+ ".vscode",".cache","coverage","logs"
+]);
+const maxUploadFileBytes=150*1024*1024;
+function shouldSkipUploadPath(relative){
+ const parts=relative.split("/").filter(Boolean);
+ if(parts.some(part=>ignoredUploadDirs.has(part.toLowerCase())))return true;
+ const name=parts[parts.length-1]||"";
+ return ["thumbs.db","desktop.ini",".ds_store"].includes(name.toLowerCase());
+}
 async function uploadProject(files){
- const id=await createWorkspace();
- const rootName=files[0].webkitRelativePath.split("/")[0];
- const normalized=files.map(file=>({file,relative:file.webkitRelativePath.split("/").slice(1).join("/")})).filter(item=>item.relative);
- if(!normalized.some(item=>/^index\.html$/i.test(item.relative)))throw new Error("所选文件夹根目录没有 index.html。请确认选择的是邀请函项目文件夹，而不是它的上一级或下一级目录。");
- let done=0;
- for(let i=0;i<normalized.length;i+=4){
-  await Promise.all(normalized.slice(i,i+4).map(async item=>{
-   const url="/api/workspaces/"+encodeURIComponent(id)+"/file?path="+encodeURIComponent(item.relative);
-   await uploadBinary(url,item.file);done++;
-  }));
-  $("#folder-name").textContent=rootName+" · 正在导入 "+done+"/"+normalized.length;
+ const firstFile=files.find(file=>file.webkitRelativePath);
+ if(!firstFile)throw new Error("浏览器没有提供文件夹相对路径，请使用 Chrome 或 Edge 重新选择文件夹。");
+ const selectedRootName=firstFile.webkitRelativePath.split("/")[0];
+ let normalized=files.map(file=>({
+  file,
+  relative:(file.webkitRelativePath||"").split("/").filter(Boolean).slice(1).join("/")
+ })).filter(item=>item.relative&&!shouldSkipUploadPath(item.relative));
+
+ let projectPrefix="";
+ if(!normalized.some(item=>/^index\\.html$/i.test(item.relative))){
+  const candidates=normalized.filter(item=>/^[^/]+\\/index\\.html$/i.test(item.relative));
+  if(candidates.length===1){
+   projectPrefix=candidates[0].relative.slice(0,candidates[0].relative.lastIndexOf("/")+1);
+   normalized=normalized
+    .filter(item=>item.relative.startsWith(projectPrefix))
+    .map(item=>({...item,relative:item.relative.slice(projectPrefix.length)}));
+  }
  }
- await completeWorkspace(id);
- return {workspaceId:id,fileCount:done,rootName};
+ if(!normalized.some(item=>/^index\\.html$/i.test(item.relative))){
+  throw new Error("没有找到项目根目录的 index.html。请直接选择包含 index.html 的 wedding-invitation 文件夹；如果选择上一级目录，系统只会在唯一子项目中自动识别。");
+ }
+ const oversized=normalized.find(item=>item.file.size>maxUploadFileBytes);
+ if(oversized){
+  const size=(oversized.file.size/1024/1024).toFixed(1);
+  throw new Error("文件超过单文件 150 MB 上传限制："+oversized.relative+"（"+size+" MB）。请先移除不需要的大文件后再导入。");
+ }
+ if(normalized.length>3000){
+  throw new Error("项目文件数量为 "+normalized.length+"，超过 3000 个文件的导入上限。请移除缓存、依赖或生成目录后再导入。");
+ }
+
+ const id=await createWorkspace();
+ const displayRootName=selectedRootName+(projectPrefix?"/"+projectPrefix.slice(0,-1):"");
+ try{
+  let done=0;
+  for(let i=0;i<normalized.length;i+=4){
+   const batch=normalized.slice(i,i+4);
+   const results=await Promise.allSettled(batch.map(async item=>{
+    try{
+     const url="/api/workspaces/"+encodeURIComponent(id)+"/file?path="+encodeURIComponent(item.relative);
+     await uploadBinary(url,item.file);
+    }catch(error){
+     throw new Error(item.relative+"："+error.message);
+    }
+   }));
+   const failures=results.filter(result=>result.status==="rejected");
+   done+=results.length-failures.length;
+   $("#folder-name").textContent=displayRootName+" · 正在导入 "+done+"/"+normalized.length;
+   if(failures.length){
+    const details=failures.slice(0,5).map(result=>result.reason.message).join("\\n");
+    throw new Error("以下文件上传失败：\\n"+details+(failures.length>5?"\\n另有 "+(failures.length-5)+" 个文件失败。":""));
+   }
+  }
+  await completeWorkspace(id);
+  return {workspaceId:id,fileCount:done,rootName:displayRootName,skippedCount:files.length-normalized.length};
+ }catch(error){
+  await deleteWorkspace(id).catch(()=>{});
+  throw error;
+ }
 }
 
 folderInput.addEventListener("change",async()=>{
