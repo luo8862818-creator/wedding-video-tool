@@ -3,91 +3,276 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#f7f4ef">
-  <title>Wedding Studio · 婚礼视频导出</title>
+  <meta name="theme-color" content="#f4f5f7">
+  <title>Wedding Studio · 婚礼视频工作台</title>
   <link rel="stylesheet" href="./css/style.css">
   <script src="./js/app.js" defer></script>
 </head>
 <body>
-  <main class="app-shell">
-    <header class="topbar">
-      <a class="brand" href="./"><span class="brand-mark">W</span><span><strong>Wedding Studio</strong><small>LOCAL VIDEO EXPORTER</small></span></a>
-      <span class="local-status"><i></i> 本地工作环境</span>
-    </header>
-    <section class="intro">
-      <p class="eyebrow">HTML · PLAYWRIGHT · FFMPEG</p>
-      <h1>把网页邀请函，<em>变成婚礼视频。</em></h1>
-      <p class="intro-copy">选择单个 HTML 文件或完整项目文件夹。工具会真实运行网页、自动识别播放结束，并按网页原本的速度录制 MP4。</p>
-    </section>
-    <section class="workspace">
-      <form id="export-form" class="settings-card">
-        <div class="section-heading"><div><span class="step">01</span><h2>选择邀请函项目</h2></div><span class="required-note">支持单文件或完整文件夹</span></div>
-        <label class="field">
-          <span>单个 HTML 文件</span>
-          <div class="picker-row">
-            <input id="single-html-file" type="file" accept=".html,.htm,text/html" hidden>
-            <button id="choose-html" class="secondary-button" type="button">选择 HTML 文件</button>
-            <span id="html-file-name" class="file-name">尚未选择 HTML 文件</span>
-          </div>
-          <small>适用于 CSS、JavaScript 已写在 HTML 内部，且不依赖外部图片、字体或脚本的网页。</small>
-        </label>
-        <label class="field">
-          <span>完整邀请函项目文件夹 <small>（包含图片、字体、CSS、JS 时使用）</small></span>
-          <div class="picker-row">
-            <input id="project-folder" type="file" webkitdirectory directory multiple hidden>
-            <button id="choose-folder" class="secondary-button" type="button">选择文件夹</button>
-            <span id="folder-name" class="file-name">尚未选择项目文件夹</span>
-          </div>
-          <small>请选择包含 index.html 的项目文件夹，系统会保留资源相对路径，并自动跳过 .git、node_modules、output 等无关目录；选择上一级目录时，也会尝试识别唯一的子项目。</small>
-        </label>
-        <label class="field">
-          <span>或填写本机 HTML 文件完整路径 <small>（备用方式）</small></span>
-          <input id="source-path" name="sourcePath" type="text" placeholder="例如：C:\Users\用户名\Desktop\wedding\index.html">
-          <small>使用本机路径时，图片、字体等资源必须仍在原目录结构中。</small>
-        </label>
-        <label class="field">
-          <span>背景音乐 <small>（可选）</small></span>
-          <div class="picker-row">
-            <input id="music-file" type="file" accept="audio/*" hidden>
-            <button id="choose-music" class="secondary-button" type="button">选择音乐文件</button>
-            <span id="music-name" class="file-name">未选择音乐</span>
-          </div>
-          <small>Playwright 录制网页画面，不直接录入网页自身音频；如果邀请函内有背景音乐，请在这里选择对应音乐文件。音乐会自动循环或裁剪到视频结束。</small>
-        </label>
-        <div class="section-heading second-heading"><div><span class="step">02</span><h2>视频参数</h2></div></div>
-        <div class="field-grid">
-          <label class="field"><span>画面比例</span><select id="preset"><option value="portrait">9:16 · 抖音竖屏</option><option value="landscape">16:9 · 横屏</option><option value="square">1:1 · 方形</option></select></label>
-          <label class="field"><span>帧率</span><select id="fps"><option value="30" selected>30 FPS · 推荐</option><option value="25">25 FPS</option><option value="60">60 FPS</option></select></label>
-          <label class="field field-full"><span>输出文件名</span><input id="output-name" type="text" value="wedding-invitation.mp4" required></label>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Wedding Studio 首页">
+      <span class="brand-mark">W</span>
+      <span class="brand-copy">
+        <strong>Wedding Studio</strong>
+        <small>INVITATION VIDEO WORKSPACE</small>
+      </span>
+    </a>
+    <div class="topbar-center">
+      <span class="topbar-breadcrumb">工作区</span>
+      <span class="breadcrumb-divider">/</span>
+      <strong>婚礼视频制作</strong>
+    </div>
+    <div class="topbar-right">
+      <span class="local-status"><i></i> 本地运行</span>
+      <span class="topbar-version">LOCAL STUDIO</span>
+    </div>
+  </header>
+
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-project">
+        <div class="sidebar-project-icon">W</div>
+        <div class="sidebar-project-copy">
+          <strong>当前工作区</strong>
+          <span>本地制作项目</span>
         </div>
-        <div class="output-hint"><span class="hint-icon">↳</span><span><strong>无需输入视频时长，也无需提前检测。</strong>网页打开后由工具真实录制；页面滚动快慢、停顿和结束时间均跟随网页本身。输出尺寸：<strong id="resolution-label">1080 × 1920</strong>。文件保存到本工具的 <code>output</code> 目录。</span></div>
-        <div class="actions"><button id="export-button" class="primary-button" type="submit"><span class="button-icon">▶</span> 开始真实播放并导出 MP4</button><p>导出期间请保持本地服务运行。网页播放结束后自动封装 MP4。</p></div>
-      </form>
-      <aside class="status-card">
-        <div class="status-header"><h2>导出任务</h2><span id="status-pill" class="status-pill idle">等待任务</span></div>
-        <div class="preview-frame" id="poster-preview"><div class="preview-inner"><span class="preview-spark">✦</span><strong>YOUR<br>WEDDING<br>FILM</strong><small>MADE WITH LOVE</small></div><span class="preview-size">9:16</span></div>
-        <div class="progress-block"><div class="progress-label"><span id="progress-text">尚未开始</span><strong id="progress-value">0%</strong></div><div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div></div>
-        <div class="task-details">
-          <div><span>当前步骤</span><strong id="step-text">等待导出</strong></div>
-          <div><span>输出文件</span><strong id="file-text">尚未生成</strong></div>
-          <div><span>实际视频时长</span><strong id="video-duration">等待录制</strong></div>
-          <div><span>本次耗时</span><strong id="elapsed-text">00:00</strong></div>
+        <span class="sidebar-project-dot"></span>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="工作区导航">
+        <span class="nav-caption">WORKSPACE</span>
+        <a class="sidebar-link active" href="#project-section">
+          <span class="nav-index">01</span>
+          <span class="nav-label">项目素材</span>
+          <span class="nav-arrow">›</span>
+        </a>
+        <a class="sidebar-link" href="#video-section">
+          <span class="nav-index">02</span>
+          <span class="nav-label">视频设置</span>
+          <span class="nav-arrow">›</span>
+        </a>
+        <a class="sidebar-link" href="#task-section">
+          <span class="nav-index">03</span>
+          <span class="nav-label">导出任务</span>
+          <span class="nav-arrow">›</span>
+        </a>
+        <a class="sidebar-link" href="#history-section">
+          <span class="nav-index">04</span>
+          <span class="nav-label">导出记录</span>
+          <span class="nav-arrow">›</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="sidebar-status-icon"><span></span></div>
+        <div>
+          <strong>本地处理模式</strong>
+          <small>文件不会上传到云端</small>
         </div>
-        <section class="history-panel">
-          <div class="history-heading"><h3>最近导出记录</h3><button id="refresh-history" class="text-button" type="button">刷新</button></div>
-          <p class="history-hint">自动保存最近 100 次任务，包含实际视频时长、导出耗时和成品帧率。</p>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-scroll">
+        <div class="stage-heading">
+          <div>
+            <p class="eyebrow">WEDDING VIDEO STUDIO <span>·</span> WORKSPACE</p>
+            <h1>视频制作工作台</h1>
+            <p class="stage-description">导入网页邀请函，设置输出参数，生成可分享的 MP4 婚礼视频。</p>
+          </div>
+          <div class="workspace-indicator">
+            <span class="indicator-dot"></span>
+            <span id="workspace-name">尚未载入项目</span>
+          </div>
+        </div>
+
+        <section class="preview-panel" aria-label="视频预览区">
+          <div class="preview-panel-head">
+            <div>
+              <span class="panel-kicker">OUTPUT PREVIEW</span>
+              <h2>成片预览</h2>
+            </div>
+            <div class="preview-meta">
+              <span class="preview-meta-chip">输出尺寸 <strong id="resolution-label">1080 × 1920</strong></span>
+              <span class="preview-meta-chip">输出格式 <strong>MP4</strong></span>
+            </div>
+          </div>
+
+          <div class="preview-stage">
+            <div class="preview-stage-grid"></div>
+            <div id="poster-preview" class="preview-frame">
+              <div class="poster-topline"><span>WEDDING INVITATION</span><span>EST. 2026</span></div>
+              <div class="preview-inner">
+                <span class="preview-spark">✦</span>
+                <small class="poster-overline">YOU ARE INVITED TO CELEBRATE</small>
+                <strong>THE<br>WEDDING</strong>
+                <span class="poster-divider"></span>
+                <span class="poster-subtitle">A DAY TO REMEMBER</span>
+                <span class="poster-hint">导入邀请函后，在这里查看导出成片</span>
+              </div>
+              <div class="poster-bottomline"><span>TOGETHER WITH LOVE</span><span>♥</span></div>
+              <span class="preview-size">9:16</span>
+            </div>
+
+            <section id="result-panel" class="result-panel" hidden>
+              <div class="result-panel-heading">
+                <div><span class="panel-kicker">RENDERED VIDEO</span><h3>导出成片</h3></div>
+                <span class="result-ready"><i></i> 已生成</span>
+              </div>
+              <video id="result-video" controls playsinline preload="metadata"></video>
+              <div class="result-actions">
+                <a id="download-link" class="download-link" download>下载 MP4</a>
+                <button id="open-video" class="secondary-button" type="button">新窗口播放</button>
+              </div>
+            </section>
+
+            <div class="preview-side-note">
+              <span class="side-note-line"></span>
+              <span>REAL BROWSER PLAYBACK<br>FRAME-BY-FRAME CAPTURE</span>
+            </div>
+          </div>
+
+          <div class="preview-footer">
+            <div class="preview-footer-item"><span class="footer-number">01</span><span><strong>真实网页播放</strong><small>保留原页面动画节奏</small></span></div>
+            <div class="preview-footer-item"><span class="footer-number">02</span><span><strong>高清画面采集</strong><small>按目标尺寸录制</small></span></div>
+            <div class="preview-footer-item"><span class="footer-number">03</span><span><strong>MP4 视频封装</strong><small>完成后可预览和下载</small></span></div>
+          </div>
+        </section>
+
+        <div class="stage-tip">
+          <span class="tip-mark">i</span>
+          <p><strong>工作流程：</strong>先在右侧导入完整邀请函项目，再设置画面比例和帧率，最后开始导出。导出过程会跟随网页真实播放，不需要手动填写视频时长。</p>
+        </div>
+      </div>
+    </main>
+
+    <aside class="inspector">
+      <div class="inspector-scroll">
+        <div class="inspector-heading">
+          <div><span class="panel-kicker">CONTROL PANEL</span><h2>制作设置</h2></div>
+          <span class="inspector-tag">SETTINGS</span>
+        </div>
+
+        <form id="export-form" class="export-form">
+          <section id="project-section" class="inspector-section">
+            <div class="section-heading">
+              <span class="section-step">01</span>
+              <div><h3>项目素材</h3><p>选择要制作的网页邀请函</p></div>
+            </div>
+
+            <label class="field">
+              <span>单个 HTML 文件</span>
+              <div class="picker-row">
+                <input id="single-html-file" type="file" accept=".html,.htm,text/html" hidden>
+                <button id="choose-html" class="secondary-button" type="button">选择文件</button>
+                <span id="html-file-name" class="file-name">尚未选择</span>
+              </div>
+              <small>适用于样式、脚本和资源都已内嵌的单页文件。</small>
+            </label>
+
+            <label class="field">
+              <span>完整项目文件夹</span>
+              <div class="picker-row">
+                <input id="project-folder" type="file" webkitdirectory directory multiple hidden>
+                <button id="choose-folder" class="secondary-button" type="button">选择文件夹</button>
+                <span id="folder-name" class="file-name">尚未选择</span>
+              </div>
+              <small>包含图片、字体、CSS、JS 等资源时，请选择包含 index.html 的项目文件夹。</small>
+            </label>
+
+            <label class="field">
+              <span>本机 HTML 完整路径 <em>备用</em></span>
+              <input id="source-path" name="sourcePath" type="text" placeholder="C:\Users\用户名\Desktop\wedding\index.html">
+              <small>使用本机路径时，外部资源必须保留原目录结构。</small>
+            </label>
+
+            <label class="field field-last">
+              <span>背景音乐 <em>可选</em></span>
+              <div class="picker-row">
+                <input id="music-file" type="file" accept="audio/*" hidden>
+                <button id="choose-music" class="secondary-button" type="button">选择音乐</button>
+                <span id="music-name" class="file-name">未选择音乐</span>
+              </div>
+              <small>音乐会循环或裁剪至视频结束，与成片时长同步。</small>
+            </label>
+          </section>
+
+          <section id="video-section" class="inspector-section">
+            <div class="section-heading">
+              <span class="section-step">02</span>
+              <div><h3>视频参数</h3><p>设置成片规格</p></div>
+            </div>
+
+            <div class="field">
+              <span>画面比例</span>
+              <select id="preset">
+                <option value="portrait">9:16 · 竖屏</option>
+                <option value="landscape">16:9 · 横屏</option>
+                <option value="square">1:1 · 方形</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <span>输出帧率</span>
+              <select id="fps">
+                <option value="30" selected>30 FPS · 推荐</option>
+                <option value="25">25 FPS</option>
+                <option value="60">60 FPS</option>
+              </select>
+            </div>
+
+            <label class="field field-last">
+              <span>输出文件名</span>
+              <input id="output-name" type="text" value="wedding-invitation.mp4" required>
+            </label>
+
+            <div class="output-hint">
+              <span class="hint-icon">↳</span>
+              <span><strong>自动识别播放结束。</strong>网页滚动、停顿和结束时间均跟随网页本身。文件保存到本工具的 <code>output</code> 目录。</span>
+            </div>
+          </section>
+
+          <div class="export-action">
+            <button id="export-button" class="primary-button" type="submit"><span class="button-icon">▶</span> 开始播放并导出 MP4</button>
+            <p>导出期间请保持本地服务运行。</p>
+          </div>
+        </form>
+
+        <section id="task-section" class="task-panel">
+          <div class="task-panel-heading">
+            <div><span class="panel-kicker">RENDER STATUS</span><h3>导出任务</h3></div>
+            <span id="status-pill" class="status-pill idle">等待任务</span>
+          </div>
+
+          <div class="progress-block">
+            <div class="progress-label"><span id="progress-text">尚未开始</span><strong id="progress-value">0%</strong></div>
+            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+          </div>
+
+          <div class="task-details">
+            <div><span>当前步骤</span><strong id="step-text">等待导出</strong></div>
+            <div><span>输出文件</span><strong id="file-text">尚未生成</strong></div>
+            <div><span>实际视频时长</span><strong id="video-duration">等待录制</strong></div>
+            <div><span>本次耗时</span><strong id="elapsed-text">00:00</strong></div>
+          </div>
+
+          <div id="message" class="message" role="status" aria-live="polite">选择 HTML 文件或完整项目文件夹后即可开始。</div>
+          <a id="log-download-link" class="download-link log-download" hidden>下载本次诊断日志</a>
+        </section>
+
+        <section id="history-section" class="history-panel">
+          <div class="history-heading"><div><span class="panel-kicker">RECENT EXPORTS</span><h3>最近导出记录</h3></div><button id="refresh-history" class="text-button" type="button">刷新</button></div>
+          <p class="history-hint">自动保存最近 100 次任务，可下载对应诊断日志。</p>
           <div id="history-list" class="history-list"><span class="history-empty">正在读取历史记录……</span></div>
         </section>
-        <div id="message" class="message" role="status" aria-live="polite">选择单个 HTML 文件或完整项目文件夹后即可开始。</div>
-        <a id="log-download-link" class="download-link" hidden>下载本次诊断日志</a>
-        <section id="result-panel" class="result-panel" hidden>
-          <h3>视频预览</h3>
-          <video id="result-video" controls playsinline preload="metadata"></video>
-          <div class="result-actions"><a id="download-link" class="download-link" download>下载 MP4</a><button id="open-video" class="secondary-button" type="button">新窗口播放</button></div>
-        </section>
-      </aside>
-    </section>
-    <footer class="footer"><span>Wedding Studio · Local-first workflow</span><span>文件只在本机处理，不会上传到第三方服务</span></footer>
-  </main>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="bottom-bar">
+    <span><i></i> LOCAL-FIRST WORKFLOW</span>
+    <span>浏览器真实播放 <b>·</b> Playwright 采集 <b>·</b> FFmpeg 编码</span>
+    <span>Wedding Studio</span>
+  </footer>
 </body>
 </html>
