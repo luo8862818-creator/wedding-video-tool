@@ -71,10 +71,12 @@ async function readPlaybackState(page){
   const maxScroll=scrollables.reduce((max,item)=>Math.max(max,item.max),0);
   const player=window.templatePlayer||window.weddingPlayer||window.invitationPlayer||null;
   const playerStarted=Boolean(player&&(player.started===true||player.playing===true||player.isPlaying===true));
+  const playerEnded=Boolean(player&&(player.ended===true||player.finished===true||player.completed===true||player.isFinished===true||player.state==="ended"));
+  const globalEnded=Boolean(window.weddingVideoFinished===true||window.invitationFinished===true||window.__weddingVideoFinished===true);
   const hintNodes=[...document.querySelectorAll("#hint,[data-playback-state],[data-playback-status],[aria-live='polite']")];
   const hintText=hintNodes.map(el=>(el.textContent||"").trim()).filter(Boolean).join(" ");
   const bodyState=String(document.body?.dataset?.playbackState||document.body?.dataset?.playbackStatus||"");
-  const ended=/播放完成|播放结束|播放完毕|播放已结束|演示结束|已结束|playback complete|playback finished/i.test(hintText+" "+bodyState);
+  const ended=playerEnded||globalEnded||/播放完成|播放结束|播放完毕|播放已结束|演示结束|已结束|playback complete|playback finished/i.test(hintText+" "+bodyState);
   const playingText=/正在自动播放|正在播放|播放中|playing/i.test(hintText+" "+bodyState);
   const motionSignature=JSON.stringify(motion);
   return {
