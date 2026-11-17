@@ -197,7 +197,8 @@ async function renderVideo(options){
   throw error;
  }finally{
   if(context)await context.close().catch(()=>{});
-  if(browser)await browser.close().catch(()=>{});\n  if(sourceServer)await new Promise(resolve=>sourceServer.close(()=>resolve())).catch(()=>{});
+  if(browser)await browser.close().catch(()=>{});
+  if(sourceServer)await new Promise(resolve=>sourceServer.close(()=>resolve())).catch(()=>{});
  }
 }
 module.exports={renderVideo};
