@@ -42,6 +42,49 @@ function resolveInside(root,relative){
  return target;
 }
 
+function startWorkspacePreview(workspace){
+ if(workspace.previewServer?.listening&&workspace.previewUrl)return Promise.resolve(workspace.previewUrl);
+ return new Promise((resolve,reject)=>{
+  const previewApp=express();
+  previewApp.use((req,res,next)=>{
+   if(/^\/selected-music(?:\.|\/|$)/i.test(req.path))return res.status(404).type("text/plain").send("Not Found");
+   next();
+  });
+  previewApp.use(express.static(workspace.path,{
+   index:"index.html",
+   dotfiles:"ignore",
+   fallthrough:true,
+   etag:false,
+   lastModified:false,
+   setHeaders(response){
+    response.setHeader("Cache-Control","no-store");
+    response.setHeader("X-Content-Type-Options","nosniff");
+   }
+  }));
+  previewApp.use((_req,res)=>res.status(404).type("text/plain").send("Preview resource not found"));
+  const previewServer=previewApp.listen(0,HOST,()=>{
+   const address=previewServer.address();
+   if(!address||typeof address==="string"){
+    previewServer.close();
+    reject(new Error("无法获取本地网页预览服务端口。"));
+    return;
+   }
+   workspace.previewServer=previewServer;
+   workspace.previewUrl="http://"+HOST+":"+address.port+"/";
+   resolve(workspace.previewUrl);
+  });
+  previewServer.once("error",reject);
+ });
+}
+
+function closeWorkspacePreview(workspace){
+ return new Promise(resolve=>{
+  const previewServer=workspace.previewServer;
+  if(!previewServer||!previewServer.listening)return resolve();
+  previewServer.close(()=>resolve());
+ });
+}
+
 app.use(express.json({limit:"1mb"}));
 app.use(express.static(ROOT,{index:"index.html",dotfiles:"ignore"}));
 app.get("/api/health",(_req,res)=>res.json({ok:true,service:"wedding-video-tool"}));
@@ -53,15 +96,16 @@ app.post("/api/workspaces",(_req,res)=>{
  workspaces.set(id,{path:workspacePath,sourcePath:path.join(workspacePath,"index.html"),musicPath:null,fileCount:0,ready:false});
  res.status(201).json({workspaceId:id});
 });
-app.delete("/api/workspaces/:id",(req,res)=>{
+app.delete("/api/workspaces/:id",async(req,res)=>{
  const workspace=workspaces.get(req.params.id);
  if(!workspace)return res.json({ok:true});
  try{
+  await closeWorkspacePreview(workspace);
   fs.rmSync(workspace.path,{recursive:true,force:true});
   workspaces.delete(req.params.id);
   res.json({ok:true});
  }catch(error){
-  return fail(res,500,"清理导入失败的临时项目时出错："+error.message);
+  return fail(res,500,"清理导入的临时项目时出错："+error.message);
  }
 });
 app.put("/api/workspaces/:id/file",express.raw({type:"application/octet-stream",limit:"150mb"}),(req,res)=>{
@@ -81,32 +125,18 @@ app.put("/api/workspaces/:id/file",express.raw({type:"application/octet-stream",
   res.json({ok:true});
  }catch(error){return fail(res,400,error.message);}
 });
-app.post("/api/workspaces/:id/complete",(req,res)=>{
+app.post("/api/workspaces/:id/complete",async(req,res)=>{
  const workspace=workspaces.get(req.params.id);
  if(!workspace)return fail(res,404,"项目工作区不存在。");
  if(!fs.existsSync(workspace.sourcePath))return fail(res,400,"没有找到 index.html。单文件导入会自动保存为 index.html；文件夹导入时请确保它位于所选文件夹根目录。");
- workspace.ready=true;
- res.json({ok:true,fileCount:workspace.fileCount,sourceName:"index.html"});
-});
-
-/* 为已导入的项目提供同源预览地址，HTML 内的相对 CSS、JS、图片和字体路径可正常加载。 */
-app.use("/workspace-preview/:id",(req,res,next)=>{
- const workspace=workspaces.get(req.params.id);
- if(!workspace||!workspace.ready)return fail(res,404,"预览项目不存在或尚未导入完成，请重新导入项目。");
- const requestedPath=req.originalUrl.split("?")[0];
- if(requestedPath===req.baseUrl)return res.redirect(302,req.baseUrl+"/");
- if(!workspace.previewStatic){
-  workspace.previewStatic=express.static(workspace.path,{
-   index:"index.html",
-   dotfiles:"ignore",
-   fallthrough:false,
-   setHeaders(response){
-    response.setHeader("Cache-Control","no-store");
-    response.setHeader("X-Content-Type-Options","nosniff");
-   }
-  });
+ try{
+  workspace.ready=true;
+  const previewUrl=await startWorkspacePreview(workspace);
+  res.json({ok:true,fileCount:workspace.fileCount,sourceName:"index.html",previewUrl});
+ }catch(error){
+  workspace.ready=false;
+  return fail(res,500,"本地网页预览服务启动失败："+error.message);
  }
- workspace.previewStatic(req,res,next);
 });
 app.put("/api/workspaces/:id/music",express.raw({type:"application/octet-stream",limit:"150mb"}),(req,res)=>{
  const workspace=workspaces.get(req.params.id);
