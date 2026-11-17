@@ -3,15 +3,17 @@ const path=require("node:path");
 const fs=require("node:fs");
 const {randomUUID}=require("node:crypto");
 const {renderVideo}=require("./render");
+const {createFileLogger}=require("./logger");
 const app=express(),HOST="127.0.0.1",PORT=Number(process.env.PORT||3000);
-const ROOT=path.resolve(__dirname,".."),OUTPUT_DIR=path.join(ROOT,"output"),WORKSPACE_DIR=path.join(ROOT,"workspaces");
+const ROOT=path.resolve(__dirname,".."),OUTPUT_DIR=path.join(ROOT,"output"),WORKSPACE_DIR=path.join(ROOT,"workspaces"),LOG_DIR=path.join(OUTPUT_DIR,"logs");
 const jobs=new Map(),workspaces=new Map();let activeJobId=null;
 const HISTORY_FILE=path.join(OUTPUT_DIR,"export-history.json");
-fs.mkdirSync(OUTPUT_DIR,{recursive:true});fs.mkdirSync(WORKSPACE_DIR,{recursive:true});
+fs.mkdirSync(OUTPUT_DIR,{recursive:true});fs.mkdirSync(WORKSPACE_DIR,{recursive:true});fs.mkdirSync(LOG_DIR,{recursive:true});
+const serverLogger=createFileLogger(path.join(LOG_DIR,"server.log"));
 
 function readHistory(){
  try{const data=JSON.parse(fs.readFileSync(HISTORY_FILE,"utf8"));return Array.isArray(data)?data:[];}
- catch(error){if(error.code!=="ENOENT")console.warn("[history] 无法读取历史记录：",error.message);return [];}
+ catch(error){if(error.code!=="ENOENT")serverLogger.warn("无法读取导出历史记录",{message:error.message});return [];}
 }
 function writeHistory(records){
  const temp=HISTORY_FILE+".tmp";
@@ -24,7 +26,8 @@ function saveHistory(job){
   id:job.id,status:job.status,startedAt:job.startedAt,finishedAt:job.finishedAt,
   elapsedMs:job.elapsedMs,elapsedSeconds:Number((job.elapsedMs/1000).toFixed(1)),
   outputName:job.outputName,duration:job.duration,fps:job.fps,width:job.width,height:job.height,
-  frameCount:job.frameCount,avgFps:job.avgFps,metrics:job.metrics||null,music:job.music,error:job.error||null
+  frameCount:job.frameCount,avgFps:job.avgFps,metrics:job.metrics||null,music:job.music,error:job.error||null,
+   logUrl:job.logUrl||null
  });
  writeHistory(records);
 }
@@ -131,13 +134,28 @@ app.post("/api/export",async(req,res)=>{
   }
  })
  .then(()=>{Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"});})
- .catch(error=>{job.status="failed";job.error=error.message||"未知导出错误";job.stepLabel="导出失败";console.error("[export:"+jobId+"]",error);})
- .finally(()=>{
-  job.finishedAt=new Date().toISOString();
-  job.elapsedMs=Math.max(0,Date.now()-job.startedAtMs);
-  if(!job.avgFps&&job.frameCount&&job.duration)job.avgFps=Number((job.frameCount/job.duration).toFixed(2));
-  try{saveHistory(job);}catch(error){console.error("[history] 保存导出记录失败：",error);}
-  activeJobId=null;
+ .catch(error=>{
+   job.status="failed";job.error=error.message||"未知导出错误";job.stepLabel="导出失败";
+   logger.error("导出任务失败",{message:job.error,stack:error.stack||""});
+  })
+  .finally(async()=>{
+   job.finishedAt=new Date().toISOString();
+   job.elapsedMs=Math.max(0,Date.now()-job.startedAtMs);
+   if(!job.avgFps&&job.frameCount&&job.duration)job.avgFps=Number((job.frameCount/job.duration).toFixed(2));
+   logger.info("导出任务结束",{status:job.status,elapsedMs:job.elapsedMs,duration:job.duration,outputName:job.outputName,outputPath:path.join(OUTPUT_DIR,finalName),error:job.error||null,logPath});
+   try{saveHistory(job);}catch(error){logger.error("保存导出历史记录失败",{message:error.message});}
+   activeJobId=null;
+   await logger.close();
+  });;
+});
+
+app.get("/api/logs/:id",(req,res)=>{
+ const id=String(req.params.id||"");
+ if(!/^[0-9a-f-]{36}$/i.test(id))return fail(res,400,"日志编号不合法。");
+ const filePath=path.join(LOG_DIR,id+".log");
+ if(!fs.existsSync(filePath))return fail(res,404,"没有找到本次任务的诊断日志。");
+ res.download(filePath,"wedding-video-"+id+".log",error=>{
+  if(error&&!res.headersSent)serverLogger.error("下载任务日志失败",{id,message:error.message});
  });
 });
 
@@ -158,15 +176,10 @@ app.use((error,req,res,next)=>{
  const message=status===413
   ?"单个文件超过 150 MB 上传限制。请移除大型视频、缓存或 Git 历史文件后重新导入。"
   :(error.message||"服务器处理请求失败。");
- console.error("[request error]",req.method,req.originalUrl,status,message);
+ serverLogger.error("HTTP 请求处理失败",{method:req.method,url:req.originalUrl,status,message});
  res.status(status).json({error:message});
 });
 
 app.listen(PORT,HOST,()=>{
- console.log("==========================================");
- console.log(" Wedding Video Tool 已启动");
- console.log(" 本地地址：http://"+HOST+":"+PORT);
- console.log(" 输出目录："+OUTPUT_DIR);
- console.log(" 按 Ctrl + C 停止服务");
- console.log("==========================================");
+ serverLogger.info("Wedding Video Tool 已启动",{address:"http://"+HOST+":"+PORT,outputDir:OUTPUT_DIR,logDir:LOG_DIR});
 });
