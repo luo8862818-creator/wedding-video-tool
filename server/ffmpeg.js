@@ -75,10 +75,13 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
   if(hadPrevious)fs.renameSync(outputPath,backupPath);
   try{
    fs.renameSync(partialPath,outputPath);
-   if(hadPrevious)fs.rmSync(backupPath,{force:true});
   }catch(renameError){
    if(hadPrevious&&fs.existsSync(backupPath)&&!fs.existsSync(outputPath))fs.renameSync(backupPath,outputPath);
    throw renameError;
+  }
+  if(hadPrevious){
+   try{fs.rmSync(backupPath,{force:true});}
+   catch(cleanupError){console.warn("[ffmpeg] 新视频已就绪，但旧视频备份清理失败：",cleanupError.message);}
   }
   return {
    frames:checked.frame,
