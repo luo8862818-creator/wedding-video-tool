@@ -112,17 +112,24 @@ app.post("/api/export",async(req,res)=>{
  const safeName=path.basename(String(body.outputName||"wedding-invitation.mp4")).replace(/[^\w\-. \u4e00-\u9fa5]/g,"_").trim();
  const finalName=(safeName||"wedding-invitation").toLowerCase().endsWith(".mp4")?(safeName||"wedding-invitation.mp4"):(safeName||"wedding-invitation")+".mp4";
  const jobId=randomUUID(),startedAt=new Date().toISOString();
+ const logPath=path.join(LOG_DIR,jobId+".log");
+ const logger=createFileLogger(logPath);
  const job={
   id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备真实网页录制",
   outputName:finalName,outputUrl:"/api/output/"+encodeURIComponent(finalName),
+  logUrl:"/api/logs/"+jobId,
   error:null,startedAt,startedAtMs:Date.now(),duration:null,playbackRate:1,
   fps:frameRate,width,height,frameCount:null,avgFps:null,music:Boolean(music),metrics:null
  };
  jobs.set(jobId,job);activeJobId=jobId;
- res.status(202).json({jobId});
+ logger.info("导出任务开始",{
+  jobId,sourcePath:source,musicSelected:Boolean(music),fps:frameRate,
+  output:{width,height,file:finalName},nodeVersion:process.version,logPath
+ });
+ res.status(202).json({jobId,logUrl:job.logUrl});
  renderVideo({
   sourcePath:source,musicPath:music,outputPath:path.join(OUTPUT_DIR,finalName),
-  fps:frameRate,width,height,
+  fps:frameRate,width,height,logger,
   onProgress:(progress,stepLabel,message,metrics)=>{
    Object.assign(job,{progress,stepLabel,message});
    if(metrics){
@@ -135,18 +142,22 @@ app.post("/api/export",async(req,res)=>{
  })
  .then(()=>{Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"});})
  .catch(error=>{
-   job.status="failed";job.error=error.message||"未知导出错误";job.stepLabel="导出失败";
-   logger.error("导出任务失败",{message:job.error,stack:error.stack||""});
-  })
-  .finally(async()=>{
-   job.finishedAt=new Date().toISOString();
-   job.elapsedMs=Math.max(0,Date.now()-job.startedAtMs);
-   if(!job.avgFps&&job.frameCount&&job.duration)job.avgFps=Number((job.frameCount/job.duration).toFixed(2));
-   logger.info("导出任务结束",{status:job.status,elapsedMs:job.elapsedMs,duration:job.duration,outputName:job.outputName,outputPath:path.join(OUTPUT_DIR,finalName),error:job.error||null,logPath});
-   try{saveHistory(job);}catch(error){logger.error("保存导出历史记录失败",{message:error.message});}
-   activeJobId=null;
-   await logger.close();
-  });;
+  job.status="failed";job.error=error.message||"未知导出错误";job.stepLabel="导出失败";
+  logger.error("导出任务失败",{message:job.error,stack:error.stack||""});
+ })
+ .finally(async()=>{
+  job.finishedAt=new Date().toISOString();
+  job.elapsedMs=Math.max(0,Date.now()-job.startedAtMs);
+  if(!job.avgFps&&job.frameCount&&job.duration)job.avgFps=Number((job.frameCount/job.duration).toFixed(2));
+  logger.info("导出任务结束",{
+   status:job.status,elapsedMs:job.elapsedMs,duration:job.duration,
+   outputName:job.outputName,outputPath:path.join(OUTPUT_DIR,finalName),
+   error:job.error||null,logPath
+  });
+  try{saveHistory(job);}catch(error){logger.error("保存导出历史记录失败",{message:error.message});}
+  activeJobId=null;
+  await logger.close();
+ });
 });
 
 app.get("/api/logs/:id",(req,res)=>{
