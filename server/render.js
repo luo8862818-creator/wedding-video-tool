@@ -29,6 +29,7 @@ async function readPlaybackState(page){
 
   const semantic=[document.body,document.querySelector("main"),document.querySelector("#app"),
    ...Array.from(document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")).slice(0,100)].filter(Boolean);
+  const semanticSet=new Set(semantic);
   const motionSet=new Set(semantic),motion=[],contentRects=[];
   for(const element of unique){
    if(motionSet.size>=180)break;
@@ -42,8 +43,11 @@ async function readPlaybackState(page){
    const transform=style.transform||"none",translate=style.translate||"none";
    const round=value=>Math.round(value*2)/2;
    const transformed=transform!=="none"||translate!=="none";
-   motion.push([getId(element),transform,translate,style.top,style.left,
-    round(rect.x),round(rect.y),round(rect.width),round(rect.height)]);
+   const meaningfulArea=rect.width*rect.height>=innerWidth*innerHeight*.08;
+   if(semanticSet.has(element)||meaningfulArea){
+    motion.push([getId(element),transform,translate,style.top,style.left,
+     round(rect.x),round(rect.y),round(rect.width),round(rect.height)]);
+   }
    if(rect.height>innerHeight*1.15&&rect.width>innerWidth*.45){
     contentRects.push({top:rect.top,bottom:rect.bottom,height:rect.height,transformed});
    }
@@ -223,7 +227,7 @@ async function renderVideo(options){
 
      // 无滚动条的纯 CSS/JS 分屏动画：在画面长时间完全静止后自动结束。
      // 有真实滚动容器但尚未到底时不使用此兜底，避免中途停顿被误判为结束。
-     if(state.maxScroll<20&&activeScrollIds.size===0&&!state.hasTransformContent&&Date.now()-lastActivityAt>=idleEndMs&&state.finiteRunningAnimations===0){
+     if(activeScrollIds.size===0&&!state.hasTransformContent&&Date.now()-lastActivityAt>=idleEndMs&&state.finiteRunningAnimations===0){
       endReason="页面动画停止变化";
       break;
      }
