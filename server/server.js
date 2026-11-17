@@ -66,7 +66,7 @@ app.put("/api/workspaces/:id/file",express.raw({type:"application/octet-stream",
  if(!workspace)return fail(res,404,"项目工作区不存在，请重新选择文件。");
  if(!Buffer.isBuffer(req.body)||req.body.length===0)return fail(res,400,"上传文件内容为空。");
  try{
-  const relativePath=String(req.query.path||"").replace(/\\\\/g,"/");
+  const relativePath=String(req.query.path||"").replace(/\\/g,"/");
   const ignoredSegments=new Set([".git","node_modules","output","workspaces","temp","frames",".vscode",".cache","coverage","logs"]);
   if(relativePath.split("/").some(part=>ignoredSegments.has(part.toLowerCase()))){
    return fail(res,400,"无需导入 Git、依赖、缓存或导出目录："+relativePath);
