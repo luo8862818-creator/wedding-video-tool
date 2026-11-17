@@ -210,25 +210,55 @@ async function closeHttpServer(server){
 }
 
 function resolveCaptureProfile(sourcePath,outputWidth,outputHeight){
- const html=fs.readFileSync(sourcePath,"utf8").slice(0,65536);
- const marker=html.match(/<meta\s+name=["']wedding-video-viewport["']\s+content=["'](\d{2,4})x(\d{2,4})["'][^>]*>/i);
- if(marker){
-  const width=Number(marker[1]),height=Number(marker[2]);
-  if(width===outputWidth&&height===outputHeight){
-   return {width,height,deviceScaleFactor:1,nativeResolution:true};
+ const projectRoot=path.dirname(path.resolve(sourcePath));
+ const queue=[{file:path.resolve(sourcePath),depth:0}];
+ const visited=new Set(),scannedHtmlFiles=[];
+ const markerPattern=/<meta\s+name=["']wedding-video-viewport["']\s+content=["'](\d{2,4})x(\d{2,4})["'][^>]*>/i;
+ while(queue.length&&scannedHtmlFiles.length<30){
+  const current=queue.shift(),file=path.resolve(current.file);
+  if(visited.has(file))continue;
+  visited.add(file);
+  if(file!==projectRoot&&!file.startsWith(projectRoot+path.sep))continue;
+  if(!fs.existsSync(file)||!fs.statSync(file).isFile()||path.extname(file).toLowerCase()!==".html")continue;
+  let html="";
+  try{html=fs.readFileSync(file,"utf8").slice(0,256*1024);}catch(_){continue;}
+  const relative=path.relative(projectRoot,file)||path.basename(file);
+  scannedHtmlFiles.push(relative);
+  const marker=html.match(markerPattern);
+  if(marker&&Number(marker[1])===outputWidth&&Number(marker[2])===outputHeight){
+   return {
+    width:outputWidth,height:outputHeight,deviceScaleFactor:1,nativeResolution:true,
+    profileSource:"viewport-marker",markerFile:relative,
+    markerWidth:Number(marker[1]),markerHeight:Number(marker[2]),scannedHtmlFiles
+   };
+  }
+  if(current.depth>=4)continue;
+  const iframeTags=html.match(/<iframe\b[^>]*>/gi)||[];
+  for(const tag of iframeTags){
+   const match=tag.match(/(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+   const src=(match?.[1]||match?.[2]||match?.[3]||"").trim();
+   if(!src||/^(?:data:|blob:|javascript:|about:|https?:|\/\/)/i.test(src))continue;
+   try{
+    const currentUrlPath=path.relative(projectRoot,file).replace(/\\/g,"/");
+    const parsed=new URL(src,"http://wedding.local/"+currentUrlPath);
+    if(parsed.origin!=="http://wedding.local")continue;
+    const relativePath=decodeURIComponent(parsed.pathname).replace(/^\/+/,"");
+    const candidate=path.resolve(projectRoot,relativePath);
+    if(candidate!==projectRoot&&!candidate.startsWith(projectRoot+path.sep))continue;
+    if(path.extname(candidate).toLowerCase()!==".html")continue;
+    queue.push({file:candidate,depth:current.depth+1});
+   }catch(_){}
   }
  }
- const scale=2.4;
  return {
-  width:Math.max(1,Math.round(outputWidth/scale)),
-  height:Math.max(1,Math.round(outputHeight/scale)),
-  deviceScaleFactor:scale,
-  nativeResolution:false
+  width:outputWidth,height:outputHeight,deviceScaleFactor:1,nativeResolution:true,
+  profileSource:"output-size-fallback",markerFile:null,
+  markerWidth:null,markerHeight:null,scannedHtmlFiles
  };
 }
-
 async function renderVideo(options){
  const {sourcePath,musicPath,outputPath,fps,width,height,onProgress=()=>{}}=options;
+ const logger=options.logger||{info:()=>{},warn:()=>{},error:()=>{},write:()=>{}};
  const captureProfile=resolveCaptureProfile(sourcePath,width,height);
  const logicalWidth=captureProfile.width;
  const logicalHeight=captureProfile.height;
@@ -236,7 +266,11 @@ async function renderVideo(options){
  let browser=null,context=null,sourceServer=null,recording=null;
  const taskStartedAt=Date.now();
  try{
-  onProgress(1,"启动浏览器","创建真实网页录制环境");
+  logger.info("导出参数",{
+   sourcePath,outputPath,musicPath:Boolean(musicPath),fps,width,height,
+   captureProfile,playwrightVersion:require("playwright/package.json").version
+  });
+  onProgress(1,"启动浏览器","创建原生分辨率网页录制环境");
   browser=await chromium.launch({headless:true,args:[
    "--autoplay-policy=no-user-gesture-required",
    "--disable-background-timer-throttling",
@@ -244,13 +278,20 @@ async function renderVideo(options){
    "--disable-backgrounding-occluded-windows",
    "--disable-features=CalculateNativeWinOcclusion"
   ]});
-  // 默认沿用移动端 CSS 视口；带有 wedding-video-viewport 标记且与输出尺寸一致的测试页，直接以目标像素尺寸录制。
+  // 浏览器视口、录制画布和最终视频统一使用目标尺寸，禁止低分辨率采集后放大。
   context=await browser.newContext({
    viewport:{width:logicalWidth,height:logicalHeight},
+   screen:{width:logicalWidth,height:logicalHeight},
    deviceScaleFactor:captureProfile.deviceScaleFactor,
    colorScheme:"light",
    reducedMotion:"no-preference",
-   recordVideo:{dir:recordDir,size:{width:logicalWidth,height:logicalHeight}}
+   recordVideo:{dir:recordDir,size:{width:logicalWidth,height:logicalHeight},fps}
+  });
+  logger.info("浏览器录制配置",{
+   browserVersion:browser.version(),
+   viewport:{width:logicalWidth,height:logicalHeight},
+   videoSize:{width:logicalWidth,height:logicalHeight},
+   deviceScaleFactor:captureProfile.deviceScaleFactor,captureFps:fps
   });
   const page=await context.newPage();
   recording=page.video();
