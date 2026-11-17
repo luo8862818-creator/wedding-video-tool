@@ -3,7 +3,7 @@ const form=$("#export-form"),exportButton=$("#export-button"),preset=$("#preset"
 const statusPill=$("#status-pill"),progressText=$("#progress-text"),progressValue=$("#progress-value"),progressBar=$("#progress-bar"),stepText=$("#step-text"),fileText=$("#file-text"),message=$("#message");
 const folderInput=$("#project-folder"),musicInput=$("#music-file");
 const presets={portrait:{width:1080,height:1920,label:"1080 × 1920"},landscape:{width:1920,height:1080,label:"1920 × 1080"},square:{width:1080,height:1080,label:"1080 × 1080"}};
-let workspaceId=null,musicPath="",pollingTimer=null,currentVideoUrl="";
+let workspaceId=null,musicPath="",pollingTimer=null;
 function setStatus(type,label){statusPill.className="status-pill "+type;statusPill.textContent=label;}
 function showMessage(text,type=""){message.textContent=text;message.className="message "+type;}
 function setProgress(value,label){const n=Math.max(0,Math.min(100,Math.round(Number(value)||0)));progressBar.style.width=n+"%";progressValue.textContent=n+"%";if(label)progressText.textContent=label;}
@@ -12,22 +12,36 @@ function updateEstimate(){$("#resolution-label").textContent=presets[preset.valu
 [preset,duration,speed].forEach(el=>el.addEventListener("change",updateEstimate));duration.addEventListener("input",updateEstimate);
 $("#choose-folder").addEventListener("click",()=>folderInput.click());
 $("#choose-music").addEventListener("click",()=>musicInput.click());
-async function upload(url,body){const response=await fetch(url,{method:"POST",body});const data=await response.json();if(!response.ok)throw new Error(data.error||"文件上传失败");return data;}
+async function requestJson(url,options={}){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(data.error||"请求失败");return data;}
+async function uploadProject(files){
+ const created=await requestJson("/api/workspaces",{method:"POST"}),id=created.workspaceId;
+ const rootName=files[0].webkitRelativePath.split("/")[0];let done=0;
+ const normalized=files.map(file=>({file,relative:file.webkitRelativePath.split("/").slice(1).join("/")})).filter(item=>item.relative);
+ for(let i=0;i<normalized.length;i+=4){
+  await Promise.all(normalized.slice(i,i+4).map(async item=>{
+   const url="/api/workspaces/"+encodeURIComponent(id)+"/file?path="+encodeURIComponent(item.relative);
+   const response=await fetch(url,{method:"PUT",headers:{"Content-Type":"application/octet-stream"},body:item.file});
+   const result=await response.json();if(!response.ok)throw new Error(result.error||"上传文件失败："+item.relative);done++;
+  }));
+  $("#folder-name").textContent=rootName+" · 正在导入 "+done+"/"+normalized.length;
+ }
+ await requestJson("/api/workspaces/"+encodeURIComponent(id)+"/complete",{method:"POST"});
+ return {workspaceId:id,fileCount:done,sourceName:"index.html",rootName};
+}
 folderInput.addEventListener("change",async()=>{
  const files=[...folderInput.files];if(!files.length)return;
- const rootName=files[0].webkitRelativePath.split("/")[0]||"项目文件夹";
- $("#folder-name").textContent=rootName+"（"+files.length+" 个文件）";
- $("#source-path").value="";
- $("#choose-folder").disabled=true;showMessage("正在导入项目文件夹，文件较多时请稍候……");
- try{const data=new FormData();files.forEach(file=>data.append("files",file,file.webkitRelativePath));const result=await upload("/api/upload-project",data);workspaceId=result.workspaceId;$("#folder-name").textContent=rootName+" · 导入完成（"+result.fileCount+" 个文件）";showMessage("项目导入成功，已识别 "+result.sourceName+"。");}
- catch(error){workspaceId=null;showMessage(error.message,"error");}
- finally{$("#choose-folder").disabled=false;}
+ $("#folder-name").textContent="准备导入 "+files.length+" 个文件……";$("#source-path").value="";workspaceId=null;musicPath="";
+ $("#choose-folder").disabled=true;$("#choose-music").disabled=true;showMessage("正在导入完整项目文件夹，文件较多时请稍候……");
+ try{const result=await uploadProject(files);workspaceId=result.workspaceId;$("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";$("#music-name").textContent="未选择音乐";showMessage("项目导入成功，已识别根目录 index.html。");}
+ catch(error){showMessage(error.message,"error");}
+ finally{$("#choose-folder").disabled=false;$("#choose-music").disabled=false;}
 });
 musicInput.addEventListener("change",async()=>{
  const file=musicInput.files[0];if(!file)return;
- $("#music-name").textContent=file.name;$("#choose-music").disabled=true;showMessage("正在导入背景音乐……");
- try{if(!workspaceId)throw new Error("请先选择并导入邀请函项目文件夹，再选择音乐。");const data=new FormData();data.append("music",file,file.name);const result=await upload("/api/upload-music/"+encodeURIComponent(workspaceId),data);musicPath=result.musicPath;$("#music-name").textContent=file.name+" · 已导入";showMessage("背景音乐已导入。");}
- catch(error){musicPath="";showMessage(error.message,"error");}
+ if(!workspaceId){showMessage("请先选择并导入邀请函项目文件夹，再选择音乐。","error");musicInput.value="";return;}
+ $("#music-name").textContent=file.name+" · 正在导入";$("#choose-music").disabled=true;
+ try{const url="/api/workspaces/"+encodeURIComponent(workspaceId)+"/music?name="+encodeURIComponent(file.name);await requestJson(url,{method:"PUT",headers:{"Content-Type":"application/octet-stream"},body:file});musicPath="";$("#music-name").textContent=file.name+" · 已导入";showMessage("背景音乐已导入。");}
+ catch(error){showMessage(error.message,"error");}
  finally{$("#choose-music").disabled=false;}
 });
 function showResult(result){
@@ -43,13 +57,12 @@ async function pollJob(jobId){
 }
 form.addEventListener("submit",async event=>{
  event.preventDefault();if(pollingTimer)clearInterval(pollingTimer);
- const presetConfig=presets[preset.value],baseDuration=Number(duration.value),multiplier=Number(speed.value),finalDuration=baseDuration/multiplier;
- const sourcePath=$("#source-path").value.trim();
+ const presetConfig=presets[preset.value],baseDuration=Number(duration.value),multiplier=Number(speed.value),finalDuration=baseDuration/multiplier,sourcePath=$("#source-path").value.trim();
  if(!workspaceId&&!sourcePath){showMessage("请先选择项目文件夹，或填写 HTML 文件完整路径。","error");return;}
  if(!Number.isFinite(finalDuration)||finalDuration<5||finalDuration>300){showMessage("按当前播放速度计算，最终视频时长必须在 5～300 秒之间。","error");return;}
- const payload={workspaceId,sourcePath,musicPath,duration:Number(finalDuration.toFixed(3)),fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
+ const payload={workspaceId,sourcePath,duration:Number(finalDuration.toFixed(3)),fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
  exportButton.disabled=true;$("#result-panel").hidden=true;setStatus("running","准备导出");setProgress(0,"正在提交任务");stepText.textContent="检查参数";fileText.textContent=payload.outputName;showMessage("正在连接本地导出服务……");
- try{const response=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw new Error(result.error||"创建导出任务失败");setStatus("running","正在导出");showMessage("任务已启动。正在逐帧渲染，请保持服务运行。");pollingTimer=setInterval(()=>pollJob(result.jobId),700);await pollJob(result.jobId);}
+ try{const result=await requestJson("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});setStatus("running","正在导出");showMessage("任务已启动。正在按设定速度逐帧渲染，请保持服务运行。");pollingTimer=setInterval(()=>pollJob(result.jobId),700);await pollJob(result.jobId);}
  catch(error){exportButton.disabled=false;setStatus("error","启动失败");showMessage(error.message,"error");}
 });
 updateEstimate();
