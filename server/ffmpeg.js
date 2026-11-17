@@ -70,8 +70,16 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
   const durationSeconds=Number((checked.outTimeSeconds>0?checked.outTimeSeconds:checked.frame/fps).toFixed(3));
 
   // 只有完整转码并解码校验成功后，才替换正式输出文件。
-  fs.rmSync(outputPath,{force:true});
-  fs.renameSync(partialPath,outputPath);
+  const backupPath=outputPath+".previous-"+process.pid+"-"+Date.now();
+  const hadPrevious=fs.existsSync(outputPath);
+  if(hadPrevious)fs.renameSync(outputPath,backupPath);
+  try{
+   fs.renameSync(partialPath,outputPath);
+   if(hadPrevious)fs.rmSync(backupPath,{force:true});
+  }catch(renameError){
+   if(hadPrevious&&fs.existsSync(backupPath)&&!fs.existsSync(outputPath))fs.renameSync(backupPath,outputPath);
+   throw renameError;
+  }
   return {
    frames:checked.frame,
    durationSeconds,
