@@ -157,7 +157,11 @@ async function renderVideo(options){
    throw new Error("视频关键帧未覆盖开场、滚动和结尾阶段："+JSON.stringify(samples));
   }
   onProgress(96,"封装视频","正在等待 FFmpeg 完成 MP4 编码");
-  const encoded=await encoder.finish();encoder=null;\n  if(encoded.frames!==frameCount)throw new Error("MP4 帧数不一致：渲染 "+frameCount+" 帧，编码 "+encoded.frames+" 帧。");
+  const encoded=await encoder.finish();
+  encoder=null;
+  if(encoded.frames!==frameCount){
+   throw new Error("MP4 帧数不一致：渲染 "+frameCount+" 帧，编码 "+encoded.frames+" 帧。");
+  }
   const elapsedMs=Date.now()-startedAt;
   const metrics={
    frames:frameCount,workerCount:1,
