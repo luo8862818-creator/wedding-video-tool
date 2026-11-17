@@ -4,6 +4,8 @@ node_modules/
 # Generated videos and temporary output
 output/*
 !output/.gitkeep
+workspaces/*
+!workspaces/.gitkeep
 temp/
 frames/
 
