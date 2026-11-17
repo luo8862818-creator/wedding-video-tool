@@ -108,7 +108,7 @@ async function closeHttpServer(server){
 
 function resolveCaptureProfile(sourcePath,outputWidth,outputHeight){
  const html=fs.readFileSync(sourcePath,"utf8").slice(0,65536);
- const marker=html.match(/<meta\\s+name=["']wedding-video-viewport["']\\s+content=["'](\\d{2,4})x(\\d{2,4})["'][^>]*>/i);
+ const marker=html.match(/<meta\s+name=["']wedding-video-viewport["']\s+content=["'](\d{2,4})x(\d{2,4})["'][^>]*>/i);
  if(marker){
   const width=Number(marker[1]),height=Number(marker[2]);
   if(width===outputWidth&&height===outputHeight){
