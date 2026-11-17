@@ -30,9 +30,9 @@ async function uploadProject(files){
 }
 folderInput.addEventListener("change",async()=>{
  const files=[...folderInput.files];if(!files.length)return;
- $("#folder-name").textContent="准备导入 "+files.length+" 个文件……";workspaceId=null;musicPath="";
+ $("#folder-name").textContent="准备导入 "+files.length+" 个文件……";$("#source-path").value="";workspaceId=null;musicPath="";
  $("#choose-folder").disabled=true;$("#choose-music").disabled=true;showMessage("正在导入完整项目文件夹，文件较多时请稍候……");
- try{const result=await uploadProject(files);workspaceId=result.workspaceId;$("#folder-name").textContent=result.rootName+" · 已识别 index.html（"+result.fileCount+" 个文件）";$("#music-name").textContent="未选择音乐";showMessage("项目导入成功，根目录 index.html 已自动识别，相关素材已一并导入。","success");}
+ try{const result=await uploadProject(files);workspaceId=result.workspaceId;$("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";$("#music-name").textContent="未选择音乐";showMessage("项目导入成功，已识别根目录 index.html。");}
  catch(error){showMessage(error.message,"error");}
  finally{$("#choose-folder").disabled=false;$("#choose-music").disabled=false;}
 });
@@ -58,10 +58,10 @@ async function pollJob(jobId){
 }
 form.addEventListener("submit",async event=>{
  event.preventDefault();if(pollingTimer)clearInterval(pollingTimer);
- const presetConfig=presets[preset.value],baseDuration=Number(duration.value),multiplier=Number(speed.value),finalDuration=baseDuration/multiplier;
- if(!workspaceId){showMessage("请先选择包含 index.html 的完整婚礼请柬项目文件夹。","error");return;}
+ const presetConfig=presets[preset.value],baseDuration=Number(duration.value),multiplier=Number(speed.value),finalDuration=baseDuration/multiplier,sourcePath=$("#source-path").value.trim();
+ if(!workspaceId&&!sourcePath){showMessage("请先选择项目文件夹，或填写 HTML 文件完整路径。","error");return;}
  if(!Number.isFinite(finalDuration)||finalDuration<5||finalDuration>300){showMessage("按当前播放速度计算，最终视频时长必须在 5～300 秒之间。","error");return;}
- const payload={workspaceId,duration:Number(finalDuration.toFixed(3)),fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
+ const payload={workspaceId,sourcePath,duration:Number(finalDuration.toFixed(3)),fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
  exportButton.disabled=true;$("#result-panel").hidden=true;$("#poster-preview").hidden=false;setStatus("running","准备导出");setProgress(0,"正在提交任务");stepText.textContent="检查参数";fileText.textContent=payload.outputName;showMessage("正在连接本地导出服务……");
  try{const result=await requestJson("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});setStatus("running","正在导出");showMessage("任务已启动。正在按设定速度逐帧渲染，请保持服务运行。");pollingTimer=setInterval(()=>pollJob(result.jobId),700);await pollJob(result.jobId);}
  catch(error){exportButton.disabled=false;setStatus("error","启动失败");showMessage(error.message,"error");}
