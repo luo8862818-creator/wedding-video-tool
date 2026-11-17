@@ -3,6 +3,9 @@ const form=$("#export-form"),exportButton=$("#export-button"),preset=$("#preset"
 const statusPill=$("#status-pill"),progressText=$("#progress-text"),progressValue=$("#progress-value"),progressBar=$("#progress-bar");
 const stepText=$("#step-text"),fileText=$("#file-text"),message=$("#message");
 const folderInput=$("#project-folder"),singleHtmlInput=$("#single-html-file"),musicInput=$("#music-file"),sourcePathInput=$("#source-path");
+const invitationPreview=$("#invitation-preview"),posterPreview=$("#poster-preview"),resultPanel=$("#result-panel");
+const previewStatus=$("#preview-status"),reloadPreviewButton=$("#reload-preview"),openPreviewButton=$("#open-preview");
+let previewUrl=null;
 const presets={
  portrait:{width:1080,height:1920,label:"1080 × 1920"},
  landscape:{width:1920,height:1080,label:"1920 × 1080"},
@@ -14,6 +17,85 @@ function setWorkspaceName(name){
  const element=$("#workspace-name");
  if(element)element.textContent=name||"尚未载入项目";
 }
+
+function setPreviewStatus(label,state=""){
+ if(!previewStatus)return;
+ previewStatus.textContent=label;
+ previewStatus.className="preview-status"+(state?" "+state:"");
+}
+
+function updatePreviewPreset(){
+ if(invitationPreview)invitationPreview.dataset.preset=preset.value;
+}
+
+function hideLivePreview(){
+ previewUrl=null;
+ if(invitationPreview){
+  invitationPreview.dataset.previewUrl="";
+  invitationPreview.hidden=true;
+  invitationPreview.src="about:blank";
+ }
+ if(posterPreview)posterPreview.hidden=false;
+ if(reloadPreviewButton)reloadPreviewButton.disabled=true;
+ if(openPreviewButton)openPreviewButton.disabled=true;
+ setPreviewStatus("等待导入");
+}
+
+function showLivePreview(){
+ if(!workspaceId||!previewUrl||!invitationPreview)return false;
+ resultPanel.hidden=true;
+ posterPreview.hidden=true;
+ invitationPreview.hidden=false;
+ updatePreviewPreset();
+ return true;
+}
+
+function loadWorkspacePreview(id){
+ if(!id||!invitationPreview)return;
+ const url="/workspace-preview/"+encodeURIComponent(id)+"/?preview="+Date.now();
+ previewUrl=url;
+ invitationPreview.dataset.previewUrl=url;
+ invitationPreview.onload=()=>{
+  if(invitationPreview.dataset.previewUrl!==url)return;
+  try{
+   const doc=invitationPreview.contentDocument;
+   const bodyText=(doc?.body?.innerText||"").trim();
+   if(/预览项目不存在|尚未导入完成|Cannot GET|Not Found/i.test(bodyText)){
+    setPreviewStatus("页面加载失败","error");
+    return;
+   }
+   const brokenImages=doc?Array.from(doc.images).filter(image=>image.complete&&!image.naturalWidth).length:0;
+   setPreviewStatus(brokenImages?("已载入 · "+brokenImages+" 张图片异常"):"实时预览已载入",brokenImages?"error":"ready");
+  }catch(_){
+   setPreviewStatus("网页已打开","ready");
+  }
+  reloadPreviewButton.disabled=false;
+  openPreviewButton.disabled=false;
+ };
+ invitationPreview.onerror=()=>{
+  if(invitationPreview.dataset.previewUrl===url)setPreviewStatus("预览加载失败","error");
+ };
+ invitationPreview.hidden=false;
+ posterPreview.hidden=true;
+ resultPanel.hidden=true;
+ if(reloadPreviewButton)reloadPreviewButton.disabled=true;
+ if(openPreviewButton)openPreviewButton.disabled=true;
+ setPreviewStatus("正在加载邀请函","loading");
+ updatePreviewPreset();
+ invitationPreview.src=url;
+}
+
+function refreshWorkspacePreview(){
+ if(!workspaceId)return;
+ loadWorkspacePreview(workspaceId);
+}
+
+reloadPreviewButton?.addEventListener("click",()=>{
+ if(showLivePreview())refreshWorkspacePreview();
+});
+openPreviewButton?.addEventListener("click",()=>{
+ if(previewUrl)window.open(previewUrl,"_blank","noopener,noreferrer");
+});
 
 document.querySelectorAll(".sidebar-link").forEach(link=>{
  link.addEventListener("click",event=>{
@@ -108,8 +190,10 @@ $("#refresh-history")?.addEventListener("click",loadHistory);
 
 preset.addEventListener("change",()=>{
  $("#resolution-label").textContent=presets[preset.value].label;
+ updatePreviewPreset();
 });
 $("#resolution-label").textContent=presets[preset.value].label;
+updatePreviewPreset();
 
 $("#choose-html").addEventListener("click",()=>singleHtmlInput.click());
 $("#choose-folder").addEventListener("click",()=>folderInput.click());
@@ -119,6 +203,7 @@ singleHtmlInput.addEventListener("change",async()=>{
  const file=singleHtmlInput.files[0];
  if(!file)return;
  workspaceId=null;folderInput.value="";sourcePathInput.value="";musicInput.value="";isImporting=true;
+ hideLivePreview();
  exportButton.disabled=true;
  $("#choose-html").disabled=true;$("#choose-folder").disabled=true;$("#choose-music").disabled=true;
  $("#html-file-name").textContent=file.name+" · 正在导入";
@@ -133,11 +218,13 @@ singleHtmlInput.addEventListener("change",async()=>{
   workspaceId=id;
   $("#html-file-name").textContent=file.name+" · 导入完成";
   setWorkspaceName(file.name);
-  showMessage("HTML 文件导入成功。单文件模式不包含它引用的外部图片、字体、CSS 或 JS；如果网页依赖这些资源，请改用完整文件夹导入。","success");
+  loadWorkspacePreview(workspaceId);
+  showMessage("HTML 文件导入成功，中央区域正在加载实时预览。单文件模式不包含它引用的外部图片、字体、CSS 或 JS；如果网页依赖这些资源，请改用完整文件夹导入。","success");
  }catch(error){
   if(id)await deleteWorkspace(id).catch(()=>{});
   workspaceId=null;$("#html-file-name").textContent=file.name+" · 导入失败";
   setWorkspaceName("项目导入失败");
+  hideLivePreview();
   showMessage(error.message,"error");
  }finally{
   isImporting=false;singleHtmlInput.value="";
@@ -221,6 +308,7 @@ folderInput.addEventListener("change",async()=>{
  const files=[...folderInput.files];
  if(!files.length)return;
  workspaceId=null;singleHtmlInput.value="";sourcePathInput.value="";musicInput.value="";isImporting=true;
+ hideLivePreview();
  exportButton.disabled=true;
  $("#choose-html").disabled=true;$("#choose-folder").disabled=true;$("#choose-music").disabled=true;
  $("#folder-name").textContent="准备导入 "+files.length+" 个文件……";
@@ -232,10 +320,12 @@ folderInput.addEventListener("change",async()=>{
   workspaceId=result.workspaceId;
   $("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";
   setWorkspaceName(result.rootName);
-  showMessage("项目导入成功，已识别根目录 index.html。"+(result.skippedCount?" 已忽略 "+result.skippedCount+" 个 Git、输出、缓存或项目外文件。":""),"success");
+  loadWorkspacePreview(workspaceId);
+  showMessage("项目导入成功，中央区域正在加载真实网页预览。"+(result.skippedCount?" 已忽略 "+result.skippedCount+" 个 Git、输出、缓存或项目外文件。":""),"success");
  }catch(error){
   workspaceId=null;$("#folder-name").textContent="导入失败";
   setWorkspaceName("项目导入失败");
+  hideLivePreview();
   showMessage(error.message,"error");
  }finally{
   isImporting=false;folderInput.value="";
@@ -249,6 +339,8 @@ sourcePathInput.addEventListener("input",()=>{
   $("#html-file-name").textContent="使用本机路径";
   $("#folder-name").textContent="使用本机路径";
   setWorkspaceName(sourcePathInput.value.trim().split(/[\\/]/).pop());
+  hideLivePreview();
+  setPreviewStatus("本机路径模式不提供预览");
  }
 });
 
@@ -277,7 +369,9 @@ musicInput.addEventListener("change",async()=>{
 
 function showResult(result){
  const panel=$("#result-panel"),video=$("#result-video"),download=$("#download-link"),open=$("#open-video");
- $("#poster-preview").hidden=true;
+ posterPreview.hidden=true;
+ invitationPreview.hidden=true;
+ setPreviewStatus("成片已生成","ready");
  const url=result.outputUrl+"?v="+Date.now();
  video.pause();video.src=url;video.load();
  download.href=result.outputUrl;download.download=result.outputName;download.textContent="下载 "+result.outputName;
@@ -314,7 +408,9 @@ async function pollJob(jobId){
   }
   if(result.status==="failed"){
    clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
-   setStatus("error","导出失败");showMessage(result.error||"导出失败。请下载本次诊断日志排查原因。","error");
+   setStatus("error","导出失败");
+   if(!showLivePreview())posterPreview.hidden=false;
+   showMessage(result.error||"导出失败。请下载本次诊断日志排查原因。","error");
    loadHistory();
   }
  }catch(error){
@@ -336,7 +432,12 @@ form.addEventListener("submit",async event=>{
   width:presetConfig.width,height:presetConfig.height,
   outputName:$("#output-name").value.trim()
  };
- exportButton.disabled=true;$("#result-panel").hidden=true;$("#poster-preview").hidden=false;
+ exportButton.disabled=true;
+ resultPanel.hidden=true;
+ if(!showLivePreview()){
+  invitationPreview.hidden=true;
+  posterPreview.hidden=false;
+ }
  setStatus("running","准备录制");setProgress(0,"正在启动浏览器");
  stepText.textContent="等待网页播放";fileText.textContent=payload.outputName;
  $("#video-duration").textContent="等待录制";
