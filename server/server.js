@@ -85,16 +85,17 @@ app.post("/api/export",async(req,res)=>{
  const music=workspace?.musicPath||(typeof body.musicPath==="string"&&body.musicPath.trim()?path.resolve(body.musicPath.trim()):null);
  if(!source||path.extname(source).toLowerCase()!==".html"||!fs.existsSync(source)||!fs.statSync(source).isFile())return fail(res,400,"找不到 HTML 文件。请重新选择项目文件夹或检查路径。");
  if(music&&(!fs.existsSync(music)||!fs.statSync(music).isFile()))return fail(res,400,"找不到背景音乐文件，请重新选择。");
- const seconds=Number(body.duration),frameRate=Number(body.fps),width=Number(body.width),height=Number(body.height);
+ const seconds=Number(body.duration),playbackRate=Number(body.playbackRate||1),frameRate=Number(body.fps),width=Number(body.width),height=Number(body.height);
  if(!Number.isFinite(seconds)||seconds<5||seconds>300)return fail(res,400,"最终视频时长必须是 5～300 秒。");
+ if(![0.5,0.75,1,1.25,1.5,2].includes(playbackRate))return fail(res,400,"播放速度不受支持。");
  if(![25,30,60].includes(frameRate))return fail(res,400,"帧率仅支持 25、30 或 60 FPS。");
  if(![1080,1920].includes(width)||![1080,1920].includes(height)||width===height&&width!==1080)return fail(res,400,"视频尺寸不受支持。");
  const safeName=path.basename(String(body.outputName||"wedding-invitation.mp4")).replace(/[^\w\-.\u4e00-\u9fa5]/g,"_");
  const finalName=safeName.toLowerCase().endsWith(".mp4")?safeName:safeName+".mp4",jobId=randomUUID();
  const frameCount=Math.ceil(seconds*frameRate),startedAt=new Date().toISOString();
- const job={id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备渲染",outputName:finalName,outputUrl:"/api/output/"+encodeURIComponent(finalName),error:null,startedAt,startedAtMs:Date.now(),duration:seconds,fps:frameRate,width,height,frameCount,music:Boolean(music)};
+ const job={id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备渲染",outputName:finalName,outputUrl:"/api/output/"+encodeURIComponent(finalName),error:null,startedAt,startedAtMs:Date.now(),duration:seconds,playbackRate,fps:frameRate,width,height,frameCount,music:Boolean(music)};
  jobs.set(jobId,job);activeJobId=jobId;res.status(202).json({jobId});
- renderVideo({sourcePath:source,musicPath:music,outputPath:path.join(OUTPUT_DIR,finalName),duration:seconds,fps:frameRate,width,height,onProgress:(progress,stepLabel,message,metrics)=>Object.assign(job,{progress,stepLabel,message,...(metrics?{metrics}:{})})})
+ renderVideo({sourcePath:source,musicPath:music,outputPath:path.join(OUTPUT_DIR,finalName),duration:seconds,playbackRate,fps:frameRate,width,height,onProgress:(progress,stepLabel,message,metrics)=>Object.assign(job,{progress,stepLabel,message,...(metrics?{metrics}:{})})})
  .then(()=>{
   Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"});
  })
