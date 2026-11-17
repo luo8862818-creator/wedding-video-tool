@@ -23,175 +23,126 @@ function jpegSize(buffer){
  return null;
 }
 
-async function settleFrame(page,timeMs){
+async function renderTimelineFrame(page,timeMs){
  return page.evaluate(async ms=>{
   const p=window.weddingPlayer;
   const result=p.renderAt(ms);
   if(typeof p.renderCapture==="function")await p.renderCapture();
-  // 等待 DOM、图片解码和浏览器合成器完成本帧更新，再进行截图。
   await new Promise(resolve=>requestAnimationFrame(resolve));
-  return {
-   state:result.state,
-   y:result.y,
-   scrollY:window.scrollY,
-   time:result.time,
-   introSrc:document.getElementById("intro")?.getAttribute("src"),
-   outroSrc:document.getElementById("outro")?.getAttribute("src")
-  };
+  return {mode:"timeline",state:result?.state||"",y:result?.y??window.scrollY,scrollY:window.scrollY};
  },timeMs);
+}
+
+async function renderGenericFrame(page,ratio){
+ return page.evaluate(async progress=>{
+  const root=document.scrollingElement||document.documentElement;
+  const candidates=[...document.querySelectorAll("body,body *")].filter(el=>{
+   const style=getComputedStyle(el);
+   return /(auto|scroll)/.test(style.overflowY)&&el.scrollHeight>el.clientHeight+20&&el.clientHeight>80;
+  });
+  candidates.sort((a,b)=>(b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight));
+  const target=candidates[0]||root;
+  const max=Math.max(0,target.scrollHeight-target.clientHeight);
+  const y=max*progress;
+  target.scrollTop=y;
+  if(target===root||target===document.body)window.scrollTo(0,y);
+  await new Promise(resolve=>requestAnimationFrame(resolve));
+  return {mode:"generic-scroll",state:"SCROLL",y:target.scrollTop,scrollY:window.scrollY,target:target.id||target.tagName,maxScroll:max,targetTag:target.tagName};
+ },ratio);
 }
 
 async function renderVideo(options){
  const {sourcePath,musicPath,outputPath,duration,fps,width,height,onProgress}=options;
  const frameCount=Math.ceil(duration*fps);
- const logicalWidth=450;
- const logicalHeight=logicalWidth*height/width;
- const deviceScaleFactor=width/logicalWidth;
+ const logicalWidth=450,logicalHeight=logicalWidth*height/width,deviceScaleFactor=width/logicalWidth;
  let browser=null,context=null,encoder=null,sourceServer=null;
- const startedAt=Date.now();
+ const startedAt=Date.now(),samples={};
  let timelineMsTotal=0,screenshotMs=0,encoderWaitMs=0;
- const samples={};
  try{
-  onProgress(1,"启动浏览器","创建单一确定性渲染页面");
-  browser=await chromium.launch({headless:true,args:[
-   "--disable-background-timer-throttling",
-   "--disable-renderer-backgrounding",
-   "--disable-backgrounding-occluded-windows",
-   "--disable-features=CalculateNativeWinOcclusion"
-  ]});
-  context=await browser.newContext({
-   viewport:{width:logicalWidth,height:logicalHeight},
-   deviceScaleFactor,
-   colorScheme:"light",
-   reducedMotion:"no-preference"
-  });
+  onProgress(1,"启动浏览器","创建浏览器渲染页面");
+  browser=await chromium.launch({headless:true,args:["--disable-background-timer-throttling","--disable-renderer-backgrounding","--disable-backgrounding-occluded-windows","--disable-features=CalculateNativeWinOcclusion"]});
+  context=await browser.newContext({viewport:{width:logicalWidth,height:logicalHeight},deviceScaleFactor,colorScheme:"light",reducedMotion:"no-preference"});
   const page=await context.newPage();
   page.on("pageerror",error=>console.error("[邀请函脚本错误]",error.message));
   page.on("console",message=>{if(message.type()==="error")console.error("[邀请函控制台]",message.text());});
   await page.addInitScript(()=>{window.__OFFLINE_CAPTURE=true;});
-  onProgress(3,"加载邀请函","CSS 视口 "+logicalWidth+"×"+logicalHeight+"，输出 "+width+"×"+height);
   const sourceApp=express();
   sourceApp.use(express.static(path.dirname(sourcePath),{dotfiles:"allow",fallthrough:false}));
   sourceServer=http.createServer(sourceApp);
-  await new Promise((resolve,reject)=>{
-   sourceServer.once("error",reject);
-   sourceServer.listen(0,"127.0.0.1",resolve);
-  });
-  const sourceAddress=sourceServer.address();
-  const sourceUrl="http://127.0.0.1:"+sourceAddress.port+"/"+encodeURIComponent(path.basename(sourcePath));
-  onProgress(3,"加载邀请函","通过本地 HTTP 加载项目资源，避免 file:// 字体跨域限制");
+  await new Promise((resolve,reject)=>{sourceServer.once("error",reject);sourceServer.listen(0,"127.0.0.1",resolve);});
+  const addr=sourceServer.address();
+  const sourceUrl="http://127.0.0.1:"+addr.port+"/"+encodeURIComponent(path.basename(sourcePath));
+  onProgress(3,"加载邀请函","通过本地 HTTP 加载 HTML、CSS、JS、字体和图片资源");
   await page.goto(sourceUrl,{waitUntil:"load",timeout:60000});
   const ready=await page.evaluate(async()=>{
-   await window.weddingPlayer?.ready;
    if(document.fonts?.ready)await document.fonts.ready;
    await Promise.all([...document.images].map(img=>img.decode().catch(()=>{})));
    const p=window.weddingPlayer;
+   const root=document.scrollingElement||document.documentElement;
+   const scrollables=[...document.querySelectorAll("body,body *")].filter(el=>{
+    const s=getComputedStyle(el);return /(auto|scroll)/.test(s.overflowY)&&el.scrollHeight>el.clientHeight+20&&el.clientHeight>80;
+   }).sort((a,b)=>(b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight));
+   const target=scrollables[0]||root;
    return {
-    supported:Boolean(p&&typeof p.renderAt==="function"),
-    hasRenderCapture:typeof p?.renderCapture==="function",
-    playerKeys:p?Object.keys(p):[],
-    readyState:document.readyState,
-    scripts:[...document.scripts].map(s=>s.src),
-    totalMs:p?.totalMs||0,
+    hasTimeline:Boolean(p&&typeof p.renderAt==="function"),
+    totalMs:Number(p?.totalMs)||0,
     errors:p?.errors||[],
-    pageHeight:document.documentElement.scrollHeight,
+    scripts:[...document.scripts].map(s=>s.src),
+    pageHeight:root.scrollHeight,
     viewportHeight:innerHeight,
-    viewportWidth:innerWidth,
-    scrollTarget:Math.max(0,document.documentElement.scrollHeight-innerHeight),
-    chapterCount:document.querySelectorAll("main>.chapter").length,
-    metrics:p?.metrics||null
+    scrollHeight:target.scrollHeight,
+    scrollClientHeight:target.clientHeight,
+    scrollTarget:Math.max(0,target.scrollHeight-target.clientHeight),
+    scrollTargetTag:target.id||target.tagName,
+    chapterCount:document.querySelectorAll("main>.chapter,section").length
    };
   });
-  if(!ready.supported)throw new Error("邀请函时间轴接口未加载：需要 weddingPlayer.renderAt()。检测信息："+JSON.stringify({readyState:ready.readyState,playerKeys:ready.playerKeys,scripts:ready.scripts,errors:ready.errors}));
-  if(ready.errors.length)throw new Error("邀请函素材加载失败："+ready.errors.join("；"));
-  if(!ready.totalMs||ready.totalMs<=0)throw new Error("邀请函时间轴总时长无效。");
-  if(ready.chapterCount<2||ready.scrollTarget<10)throw new Error("页面没有检测到有效的多章节滚动内容。章节数："+ready.chapterCount+"，滚动距离："+ready.scrollTarget+"px。");
-  const timelineMs=ready.totalMs;
-  // 导出时长可以改变播放速度，但必须完整覆盖整个网页时间轴。
-  const startProbe=await settleFrame(page,0);
-  const middleProbe=await settleFrame(page,timelineMs*0.5);
-  const endProbe=await settleFrame(page,timelineMs-1);
-  if(startProbe.state!=="INTRO_GIF"||middleProbe.state!=="AUTO_SCROLL"||endProbe.state!=="FINISHED"){
-   throw new Error("时间轴预检失败："+JSON.stringify({startProbe,middleProbe,endProbe}));
+  if(ready.errors.length)throw new Error("邀请函页面报告资源错误："+ready.errors.join("；"));
+  const mode=ready.hasTimeline&&ready.totalMs>0?"timeline":"generic-scroll";
+  if(mode==="generic-scroll"&&ready.scrollTarget<10){
+   throw new Error("该网页没有时间轴接口，也没有可识别的纵向滚动容器。脚本："+JSON.stringify(ready.scripts)+"；页面高度："+ready.pageHeight+"；滚动容器："+ready.scrollTargetTag+"；可滚动距离："+ready.scrollTarget+"。");
   }
-  if(middleProbe.y<=startProbe.y+10||endProbe.y<=middleProbe.y){
-   throw new Error("滚动预检失败：中段与结尾画面没有向下移动。"+JSON.stringify({startProbe,middleProbe,endProbe}));
+  if(mode==="timeline"){
+   await page.evaluate(()=>{const p=window.weddingPlayer;p.chapters?.forEach(s=>{s.seen=false;if(s.header){s.header.style.opacity="";s.header.style.transform="";}});});
   }
-  // 重置章节装饰的首次进入状态，避免预检过程污染正式录制。
-  await page.evaluate(()=>{
-   const p=window.weddingPlayer;
-   p.chapters?.forEach(section=>{
-    section.seen=false;
-    if(section.header){section.header.style.opacity="";section.header.style.transform="";}
-   });
-  });
-  await settleFrame(page,0);
+  onProgress(5,"准备逐帧渲染",mode==="timeline"?"检测到网页时间轴接口，使用时间轴逐帧控制":"未检测到专用时间轴，已启用通用网页滚动捕获（不修改原网页）");
   encoder=startVideoEncoder({outputPath,fps,duration,musicPath,expectedFrames:frameCount});
-  onProgress(5,"逐帧渲染与编码","共 "+frameCount+" 帧；按同一时间轴顺序采集，不并行跳帧");
   for(let frame=0;frame<frameCount;frame++){
-   // 以输出视频的时间映射到完整网页时间轴，保证首尾覆盖。
-   const videoTime=frame/fps;
-   const timelineTime=Math.min(timelineMs-1,videoTime/duration*timelineMs);
+   const ratio=frameCount<=1?0:frame/(frameCount-1);
    const controlStart=Date.now();
-   const state=await settleFrame(page,timelineTime);
+   const state=mode==="timeline"
+    ?await renderTimelineFrame(page,ratio*ready.totalMs)
+    :await renderGenericFrame(page,ratio);
    timelineMsTotal+=Date.now()-controlStart;
    const shotStart=Date.now();
-   const image=await page.screenshot({
-    type:"jpeg",quality:92,animations:"allow",caret:"hide",scale:"device"
-   });
+   const image=await page.screenshot({type:"jpeg",quality:92,animations:"allow",caret:"hide",scale:"device"});
    screenshotMs+=Date.now()-shotStart;
    if(frame===0||frame===Math.floor(frameCount*.25)||frame===Math.floor(frameCount*.5)||frame===Math.floor(frameCount*.75)||frame===frameCount-1){
-    samples[frame]={
-     hash:crypto.createHash("sha256").update(image).digest("hex"),
-     state:state.state,y:state.y,scrollY:state.scrollY,time:state.time,
-     introSrc:state.introSrc,outroSrc:state.outroSrc
-    };
+    samples[frame]={hash:crypto.createHash("sha256").update(image).digest("hex"),state:state.state,y:state.y,scrollY:state.scrollY,mode:state.mode||mode};
    }
    if(frame===0){
     const actual=jpegSize(image);
-    if(!actual||actual.width!==width||actual.height!==height){
-     throw new Error("截图尺寸错误：实际 "+JSON.stringify(actual)+"，预期 "+width+"×"+height+"。");
-    }
+    if(!actual||actual.width!==width||actual.height!==height)throw new Error("截图尺寸错误：实际 "+JSON.stringify(actual)+"，预期 "+width+"×"+height+"。");
    }
-   const waitStart=Date.now();
-   await encoder.writeFrame(image);
-   encoderWaitMs+=Date.now()-waitStart;
+   const waitStart=Date.now();await encoder.writeFrame(image);encoderWaitMs+=Date.now()-waitStart;
    if(frame%Math.max(1,Math.floor(fps/2))===0||frame===frameCount-1){
-    const written=frame+1;
-    const elapsed=(Date.now()-startedAt)/1000;
-    onProgress(5+written/frameCount*90,"逐帧渲染与编码",
-     "第 "+written+" / "+frameCount+" 帧 · "+(written/Math.max(elapsed,.001)).toFixed(1)+" 帧/秒");
+    const written=frame+1,elapsed=(Date.now()-startedAt)/1000;
+    onProgress(5+written/frameCount*90,"逐帧渲染与编码","第 "+written+" / "+frameCount+" 帧 · "+(written/Math.max(elapsed,.001)).toFixed(1)+" 帧/秒");
    }
   }
-  const distinctHashes=new Set(Object.values(samples).map(s=>s.hash));
-  const distinctPositions=new Set(Object.values(samples).map(s=>Math.round(s.y)));
+  const sampleValues=Object.values(samples);
+  const distinctHashes=new Set(sampleValues.map(s=>s.hash));
+  const distinctPositions=new Set(sampleValues.map(s=>Math.round(s.y)));
   if(distinctHashes.size<3||distinctPositions.size<3){
-   throw new Error("画面动态校验失败：采集到的关键帧变化不足。截图差异数 "+distinctHashes.size+"，滚动位置数 "+distinctPositions.size+"。关键帧："+JSON.stringify(samples));
-  }
-  const sampledStates=Object.values(samples).map(s=>s.state);
-  if(!sampledStates.includes("INTRO_GIF")||!sampledStates.includes("AUTO_SCROLL")||!sampledStates.includes("FINISHED")){
-   throw new Error("视频关键帧未覆盖开场、滚动和结尾阶段："+JSON.stringify(samples));
+   throw new Error("动态画面校验失败：关键帧变化不足。截图差异数 "+distinctHashes.size+"，滚动位置数 "+distinctPositions.size+"。检测结果："+JSON.stringify(samples));
   }
   onProgress(96,"封装视频","正在等待 FFmpeg 完成 MP4 编码");
-  const encoded=await encoder.finish();
-  encoder=null;
-  if(encoded.frames!==frameCount){
-   throw new Error("MP4 帧数不一致：渲染 "+frameCount+" 帧，编码 "+encoded.frames+" 帧。");
-  }
+  const encoded=await encoder.finish();encoder=null;
+  if(encoded.frames!==frameCount)throw new Error("MP4 帧数不一致：渲染 "+frameCount+" 帧，编码 "+encoded.frames+" 帧。");
   const elapsedMs=Date.now()-startedAt;
-  const metrics={
-   frames:frameCount,workerCount:1,
-   outputWidth:width,outputHeight:height,
-   cssViewportWidth:logicalWidth,cssViewportHeight:logicalHeight,deviceScaleFactor,
-   timelineMs:ready.totalMs,timelineMsTotal,screenshotMs,encoderWaitMs,
-   totalSeconds:Number((elapsedMs/1000).toFixed(2)),
-   avgFps:Number((frameCount/(elapsedMs/1000||1)).toFixed(2)),
-   pageHeight:ready.pageHeight,scrollTarget:ready.scrollTarget,
-   chapterCount:ready.chapterCount,
-   sampleFrames:samples,distinctSampleFrames:distinctHashes.size
-  };
+  const metrics={mode,frames:frameCount,workerCount:1,outputWidth:width,outputHeight:height,cssViewportWidth:logicalWidth,cssViewportHeight:logicalHeight,deviceScaleFactor,timelineMs:ready.totalMs||null,timelineMsTotal,screenshotMs,encoderWaitMs,totalSeconds:Number((elapsedMs/1000).toFixed(2)),avgFps:Number((frameCount/(elapsedMs/1000||1)).toFixed(2)),pageHeight:ready.pageHeight,scrollTarget:ready.scrollTarget,scrollTargetTag:ready.scrollTargetTag,chapterCount:ready.chapterCount,sampleFrames:samples,distinctSampleFrames:distinctHashes.size};
   console.log("[render metrics]",JSON.stringify(metrics,null,2));
-  onProgress(100,"完成","MP4 已生成；共 "+frameCount+" 帧；耗时 "+metrics.totalSeconds+" 秒",metrics);
+  onProgress(100,"完成","MP4 已生成；渲染模式："+mode+"；耗时 "+metrics.totalSeconds+" 秒",metrics);
  }catch(error){
   if(encoder){try{await encoder.abort(error);}catch(_){}encoder=null;}
   throw error;
