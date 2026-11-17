@@ -106,6 +106,14 @@ async function readPlaybackState(page){
     const scrollProgress=scrollables.reduce((best,item)=>Math.max(best,item.max?item.top/item.max:0),0);
     const maxScroll=scrollables.reduce((max,item)=>Math.max(max,item.max),0);
     const diagnostics=window.__weddingCaptureDiagnostics||{};
+    const rawFrameStats=diagnostics.animationFrameStats||{};
+    const animationFrameStats={
+     frames:Number(rawFrameStats.frames)||0,
+     longFrames:Number(rawFrameStats.longFrames)||0,
+     veryLongFrames:Number(rawFrameStats.veryLongFrames)||0,
+     maxGapMs:Number(Number(rawFrameStats.maxGapMs||0).toFixed(1)),
+     averageGapMs:rawFrameStats.frames?Number((rawFrameStats.totalGapMs/rawFrameStats.frames).toFixed(1)):0
+    };
     const scripts=Array.from(document.scripts).map(script=>({
      src:script.src||"[inline]",
      type:script.type||"classic",
@@ -133,8 +141,8 @@ async function readPlaybackState(page){
      progress:Math.max(0,Math.min(1,Math.max(scrollProgress,transformProgress))),
      transformProgress,hasTransformContent:transformedRects.length>0,maxScroll,rootMax,
      hintText,bodyState,motionSignature:JSON.stringify(motion),
-     finiteRunningAnimations,runningAnimations,
-     pageHeight:root.scrollHeight,viewportHeight:innerHeight,rootTop,
+     finiteRunningAnimations,runningAnimations,animationFrameStats,
+     pageHeight:root.scrollHeight,viewportWidth:innerWidth,viewportHeight:innerHeight,rootTop,
      chapterCount:document.querySelectorAll(".chapter,.page,section").length,
      documentTitle:document.title,documentUrl:location.href,readyState:document.readyState,
      bodyClass:String(document.body?.className||"").slice(0,200),
@@ -299,7 +307,8 @@ async function renderVideo(options){
   const keepLast=(list,item,max=80)=>{list.push(item);if(list.length>max)list.shift();};
   await page.addInitScript(()=>{
    const store=window.__weddingCaptureDiagnostics={
-    events:[],resourceErrors:[],unhandledRejections:[]
+    events:[],resourceErrors:[],unhandledRejections:[],
+    animationFrameStats:{frames:0,longFrames:0,veryLongFrames:0,totalGapMs:0,maxGapMs:0,lastTimestamp:0}
    };
    const keep=(list,item,max)=>{
     list.push(item);if(list.length>max)list.shift();
@@ -328,6 +337,19 @@ async function renderVideo(options){
    window.addEventListener("load",()=>{
     keep(store.events,{event:"load",time:Math.round(performance.now())},60);
    });
+   const measureFrame=timestamp=>{
+    const stats=store.animationFrameStats;
+    if(stats.lastTimestamp){
+     const gap=timestamp-stats.lastTimestamp;
+     stats.frames++;stats.totalGapMs+=gap;
+     if(gap>50)stats.longFrames++;
+     if(gap>100)stats.veryLongFrames++;
+     if(gap>stats.maxGapMs)stats.maxGapMs=gap;
+    }
+    stats.lastTimestamp=timestamp;
+    requestAnimationFrame(measureFrame);
+   };
+   requestAnimationFrame(measureFrame);
   });
   page.on("pageerror",error=>{
    keepLast(pageErrors,{message:error.message,stack:error.stack||""});
@@ -408,7 +430,7 @@ async function renderVideo(options){
   const activeScrollIds=new Set(initial.scrollables.filter(item=>item.top>1).map(item=>item.id));
 
   while(Date.now()-readyAt<maxRecordingMs){
-   await page.waitForTimeout(200);
+   await page.waitForTimeout(500);
    const state=await readPlaybackState(page);
    latestState=state;
    if(Date.now()-lastTraceAt>=5000){
@@ -433,6 +455,8 @@ async function renderVideo(options){
     });
    }
    let moved=false;
+   const playerAdvanced=state.playerTime!==null&&lastState.playerTime!==null&&state.playerTime>lastState.playerTime+1;
+   if(playerAdvanced)moved=true;
    const previousPositions=new Map(lastState.scrollables.map(item=>[item.id,item.top]));
    for(const item of state.scrollables){
     const previous=previousPositions.get(item.id);
