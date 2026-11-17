@@ -50,12 +50,28 @@ app.post("/api/workspaces",(_req,res)=>{
  workspaces.set(id,{path:workspacePath,sourcePath:path.join(workspacePath,"index.html"),musicPath:null,fileCount:0,ready:false});
  res.status(201).json({workspaceId:id});
 });
+app.delete("/api/workspaces/:id",(req,res)=>{
+ const workspace=workspaces.get(req.params.id);
+ if(!workspace)return res.json({ok:true});
+ try{
+  fs.rmSync(workspace.path,{recursive:true,force:true});
+  workspaces.delete(req.params.id);
+  res.json({ok:true});
+ }catch(error){
+  return fail(res,500,"清理导入失败的临时项目时出错："+error.message);
+ }
+});
 app.put("/api/workspaces/:id/file",express.raw({type:"application/octet-stream",limit:"150mb"}),(req,res)=>{
  const workspace=workspaces.get(req.params.id);
  if(!workspace)return fail(res,404,"项目工作区不存在，请重新选择文件。");
  if(!Buffer.isBuffer(req.body)||req.body.length===0)return fail(res,400,"上传文件内容为空。");
  try{
-  const destination=resolveInside(workspace.path,req.query.path);
+  const relativePath=String(req.query.path||"").replace(/\\\\/g,"/");
+  const ignoredSegments=new Set([".git","node_modules","output","workspaces","temp","frames",".vscode",".cache","coverage","logs"]);
+  if(relativePath.split("/").some(part=>ignoredSegments.has(part.toLowerCase()))){
+   return fail(res,400,"无需导入 Git、依赖、缓存或导出目录："+relativePath);
+  }
+  const destination=resolveInside(workspace.path,relativePath);
   fs.mkdirSync(path.dirname(destination),{recursive:true});
   fs.writeFileSync(destination,req.body);
   workspace.fileCount++;workspace.ready=false;
@@ -136,6 +152,16 @@ app.get("/api/output/:name",(req,res)=>{
  if(!fs.existsSync(filePath))return fail(res,404,"输出文件不存在。");
  res.sendFile(filePath);
 });
+app.use((error,req,res,next)=>{
+ if(res.headersSent)return next(error);
+ const status=Number(error.status||error.statusCode)||500;
+ const message=status===413
+  ?"单个文件超过 150 MB 上传限制。请移除大型视频、缓存或 Git 历史文件后重新导入。"
+  :(error.message||"服务器处理请求失败。");
+ console.error("[request error]",req.method,req.originalUrl,status,message);
+ res.status(status).json({error:message});
+});
+
 app.listen(PORT,HOST,()=>{
  console.log("==========================================");
  console.log(" Wedding Video Tool 已启动");
