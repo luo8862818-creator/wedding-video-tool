@@ -3,6 +3,7 @@ const path=require("node:path");
 const fs=require("node:fs");
 const {randomUUID}=require("node:crypto");
 const {renderVideo}=require("./render");
+const {analyzePage}=require("./analyze");
 const app=express(),HOST="127.0.0.1",PORT=Number(process.env.PORT||3000);
 const ROOT=path.resolve(__dirname,".."),OUTPUT_DIR=path.join(ROOT,"output"),WORKSPACE_DIR=path.join(ROOT,"workspaces");
 const jobs=new Map(),workspaces=new Map();let activeJobId=null;
@@ -64,6 +65,17 @@ app.put("/api/workspaces/:id/music",express.raw({type:"application/octet-stream"
  const destination=path.join(workspace.path,"selected-music"+ext);
  try{fs.writeFileSync(destination,req.body);workspace.musicPath=destination;res.json({ok:true});}
  catch(error){return fail(res,500,"音乐文件保存失败："+error.message);}
+});
+app.post("/api/analyze",async(req,res)=>{
+ if(activeJobId)return fail(res,409,"当前正在导出视频，请等待完成后再进行时长分析。");
+ const body=req.body||{},workspace=body.workspaceId?workspaces.get(body.workspaceId):null;
+ if(body.workspaceId&&(!workspace||!workspace.ready))return fail(res,400,"项目文件夹尚未导入完成，请重新选择。");
+ const source=workspace?workspace.sourcePath:(typeof body.sourcePath==="string"?path.resolve(body.sourcePath.trim()):"");
+ if(!source||path.extname(source).toLowerCase()!==".html"||!fs.existsSync(source)||!fs.statSync(source).isFile())return fail(res,400,"找不到 HTML 文件。请先选择项目文件夹或检查路径。");
+ try{
+  const result=await analyzePage({sourcePath:source});
+  res.json({ok:true,...result});
+ }catch(error){return fail(res,422,error.message||"网页时长分析失败。");}
 });
 app.post("/api/export",async(req,res)=>{
  if(activeJobId)return fail(res,409,"当前已有导出任务，请等待完成后再试。");
