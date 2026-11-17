@@ -6,7 +6,7 @@ const {renderVideo}=require("./render");
 const {createFileLogger}=require("./logger");
 const app=express(),HOST="127.0.0.1",PORT=Number(process.env.PORT||3000);
 const ROOT=path.resolve(__dirname,".."),OUTPUT_DIR=path.join(ROOT,"output"),WORKSPACE_DIR=path.join(ROOT,"workspaces"),LOG_DIR=path.join(OUTPUT_DIR,"logs");
-const jobs=new Map(),workspaces=new Map();let activeJobId=null;
+const jobs=new Map(),workspaces=new Map();let activeJobId=null,activePreviewWorkspaceId=null;
 const HISTORY_FILE=path.join(OUTPUT_DIR,"export-history.json");
 fs.mkdirSync(OUTPUT_DIR,{recursive:true});fs.mkdirSync(WORKSPACE_DIR,{recursive:true});fs.mkdirSync(LOG_DIR,{recursive:true});
 const serverLogger=createFileLogger(path.join(LOG_DIR,"server.log"));
@@ -101,6 +101,7 @@ app.delete("/api/workspaces/:id",async(req,res)=>{
  if(!workspace)return res.json({ok:true});
  try{
   await closeWorkspacePreview(workspace);
+  if(activePreviewWorkspaceId===req.params.id)activePreviewWorkspaceId=null;
   fs.rmSync(workspace.path,{recursive:true,force:true});
   workspaces.delete(req.params.id);
   res.json({ok:true});
@@ -130,8 +131,13 @@ app.post("/api/workspaces/:id/complete",async(req,res)=>{
  if(!workspace)return fail(res,404,"项目工作区不存在。");
  if(!fs.existsSync(workspace.sourcePath))return fail(res,400,"没有找到 index.html。单文件导入会自动保存为 index.html；文件夹导入时请确保它位于所选文件夹根目录。");
  try{
+  if(activePreviewWorkspaceId&&activePreviewWorkspaceId!==req.params.id){
+   const previousWorkspace=workspaces.get(activePreviewWorkspaceId);
+   if(previousWorkspace)await closeWorkspacePreview(previousWorkspace);
+  }
   workspace.ready=true;
   const previewUrl=await startWorkspacePreview(workspace);
+  activePreviewWorkspaceId=req.params.id;
   res.json({ok:true,fileCount:workspace.fileCount,sourceName:"index.html",previewUrl});
  }catch(error){
   workspace.ready=false;
