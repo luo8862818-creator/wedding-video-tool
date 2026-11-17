@@ -11,7 +11,6 @@ async function analyzePage({sourcePath,onProgress=()=>{},maxSeconds=300,tailSeco
   browser=await chromium.launch({headless:true,args:["--disable-background-timer-throttling","--disable-renderer-backgrounding","--disable-backgrounding-occluded-windows"]});
   context=await browser.newContext({viewport:{width:450,height:800},deviceScaleFactor:1,colorScheme:"light",reducedMotion:"no-preference"});
   const page=await context.newPage();
-  await page.clock.install({time:new Date("2025-01-01T00:00:00.000Z")});
   const app=express();app.use(express.static(path.dirname(sourcePath),{dotfiles:"allow",fallthrough:false}));
   server=http.createServer(app);
   await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve);});
@@ -30,12 +29,13 @@ async function analyzePage({sourcePath,onProgress=()=>{},maxSeconds=300,tailSeco
    const seconds=info.totalMs/1000;
    return {mode:"timeline",playbackSeconds:Number(seconds.toFixed(2)),tailSeconds:0,videoSeconds:Number(seconds.toFixed(2)),details:"读取 weddingPlayer.totalMs 时间轴时长",analysisMs:Date.now()-started};
   }
-  // 统一计入网页启动延迟；所有网页定时器、CSS 动画和 rAF 均由虚拟时钟驱动。
-  await page.clock.runFor(100);
-  let elapsedMs=100,lastY=null,startedMoving=false,bottomStableMs=0,noMovementMs=0;
+  // 使用真实浏览器时钟运行页面，不接管定时器、requestAnimationFrame 或滚动行为。
+  // 这样测得的时长就是网页实际播放时长，而不是模拟时间。
+  const playbackStartedAt=Date.now();
+  let elapsedMs=0,lastY=null,startedMoving=false,bottomStableMs=0,noMovementMs=0;
   const tickMs=100,tailMs=Math.round(tailSeconds*1000);
   while(elapsedMs<maxSeconds*1000){
-   await page.clock.runFor(tickMs);elapsedMs+=tickMs;
+   await page.waitForTimeout(tickMs);elapsedMs=Date.now()-playbackStartedAt;
    const state=await page.evaluate(()=>{
     const root=document.scrollingElement||document.documentElement;
     return {y:window.scrollY,maxScroll:Math.max(0,root.scrollHeight-innerHeight),height:root.scrollHeight,ready:document.readyState};
