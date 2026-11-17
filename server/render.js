@@ -4,7 +4,7 @@ const path=require("node:path");
 const express=require("express");
 const http=require("node:http");
 const {chromium}=require("playwright");
-const {transcodeRecordedVideo}=require("./ffmpeg");
+const {transcodeRecordedVideo,transcodeFrameStream}=require("./ffmpeg");
 
 async function readPlaybackState(page){
  const frames=page.frames();
@@ -195,7 +195,7 @@ async function readPlaybackState(page){
   scripts:item.scripts||[],resources:item.resources||[],
   brokenImages:item.brokenImages||[],captureEvents:item.captureEvents||[],
   captureResourceErrors:item.captureResourceErrors||[],
-  captureRejections:item.captureRejections||[],
+  captureRejections:item.captureRejections||[],animationFrameStats:item.animationFrameStats||{},
   iframeCount:item.iframeCount||0,pageHeight:item.pageHeight||0,
   viewportHeight:item.viewportHeight||0,scrollables:item.scrollables||[]
  }));
@@ -264,19 +264,115 @@ function resolveCaptureProfile(sourcePath,outputWidth,outputHeight){
   markerWidth:null,markerHeight:null,scannedHtmlFiles
  };
 }
+function resolveLocalCaptureReference(rootDir,fromFile,rawReference){
+ const raw=String(rawReference||"").trim();
+ if(!raw||/^(?:data:|blob:|javascript:|https?:|\/\/|#)/i.test(raw))return null;
+ try{
+  const relativeBase=path.relative(rootDir,fromFile).replace(/\\/g,"/");
+  const parsed=new URL(raw,"http://wedding-capture.local/"+relativeBase);
+  if(parsed.origin!=="http://wedding-capture.local")return null;
+  const relativePath=decodeURIComponent(parsed.pathname).replace(/^\/+/, "");
+  const candidate=path.resolve(rootDir,relativePath);
+  if(candidate!==rootDir&&!candidate.startsWith(rootDir+path.sep))return null;
+  return candidate;
+ }catch(_){return null;}
+}
+
+function findDeterministicCaptureScript(sourcePath){
+ const rootDir=path.dirname(path.resolve(sourcePath));
+ const queue=[path.resolve(sourcePath)],visited=new Set();
+ while(queue.length&&visited.size<300){
+  const file=path.resolve(queue.shift());
+  if(visited.has(file))continue;
+  visited.add(file);
+  if(file!==rootDir&&!file.startsWith(rootDir+path.sep))continue;
+  if(!fs.existsSync(file))continue;
+  let stat;
+  try{stat=fs.statSync(file);}catch(_){continue;}
+  if(!stat.isFile()||stat.size>2*1024*1024)continue;
+  const extension=path.extname(file).toLowerCase();
+  if(extension!==".html"&&extension!==".htm"&&extension!==".js"&&extension!==".mjs"&&extension!==".cjs")continue;
+  let content="";
+  try{content=fs.readFileSync(file,"utf8");}catch(_){continue;}
+  if(/__OFFLINE_CAPTURE/.test(content)&&/weddingPlayer/.test(content)&&/renderAt\s*=/.test(content)&&/renderCapture\s*=/.test(content)){
+   return file;
+  }
+  if(extension===".html"||extension===".htm"){
+   const tags=content.match(/<(?:script|iframe)\b[^>]*>/gi)||[];
+   for(const tag of tags){
+    const match=tag.match(/(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const reference=(match?.[1]||match?.[2]||match?.[3]||"").trim();
+    const candidate=resolveLocalCaptureReference(rootDir,file,reference);
+    if(candidate&&/\.(?:html?|mjs|cjs|js)$/i.test(candidate))queue.push(candidate);
+   }
+  }
+ }
+ return null;
+}
+
+async function findDeterministicPlayerFrame(page,timeoutMs=20000){
+ const startedAt=Date.now();
+ while(Date.now()-startedAt<timeoutMs){
+  for(const frame of page.frames()){
+   try{
+    const supported=await frame.evaluate(()=>Boolean(
+     window.weddingPlayer&&
+     typeof window.weddingPlayer.renderAt==="function"&&
+     typeof window.weddingPlayer.renderCapture==="function"&&
+     window.weddingPlayer.ready
+    ));
+    if(supported)return frame;
+   }catch(_){}
+  }
+  await page.waitForTimeout(100);
+ }
+ return null;
+}
+
+async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress}){
+ const progressInterval=Math.max(1,Math.round(fps));
+ for(let index=0;index<frameCount;index++){
+  const timeMs=index*1000/fps;
+  await frame.evaluate(async(ms)=>{
+   const player=window.weddingPlayer;
+   if(!player||typeof player.renderAt!=="function"||typeof player.renderCapture!=="function"){
+    throw new Error("邀请函逐帧渲染接口在导出过程中丢失。");
+   }
+   player.renderAt(ms);
+   await player.renderCapture();
+   for(const animation of document.getAnimations()){
+    try{animation.pause();animation.currentTime=ms;}catch(_){}
+   }
+   await new Promise(resolve=>requestAnimationFrame(resolve));
+  },timeMs);
+  const image=await page.screenshot({type:"png",caret:"hide"});
+  if(index%progressInterval===0||index===frameCount-1){
+   const progress=6+((index+1)/frameCount)*72;
+   onProgress(progress,"逐帧渲染邀请函",
+    "已渲染 "+(index+1)+"/"+frameCount+" 帧 · "+(timeMs/1000).toFixed(1)+" 秒",
+    {renderedFrames:index+1,expectedFrames:frameCount,frameTimeMs:Number(timeMs.toFixed(2))});
+  }
+  yield image;
+ }
+}
+
 async function renderVideo(options){
  const {sourcePath,musicPath,outputPath,fps,width,height,onProgress=()=>{}}=options;
  const logger=options.logger||{info:()=>{},warn:()=>{},error:()=>{},write:()=>{}};
  const captureProfile=resolveCaptureProfile(sourcePath,width,height);
  const logicalWidth=captureProfile.width;
  const logicalHeight=captureProfile.height;
+ const deterministicCaptureScript=findDeterministicCaptureScript(sourcePath);
+ const deterministicCapture=Boolean(deterministicCaptureScript);
  const recordDir=fs.mkdtempSync(path.join(os.tmpdir(),"wedding-video-record-"));
  let browser=null,context=null,sourceServer=null,recording=null;
  const taskStartedAt=Date.now();
  try{
   logger.info("导出参数",{
    sourcePath,outputPath,musicPath:Boolean(musicPath),fps,width,height,
-   captureProfile,playwrightVersion:require("playwright/package.json").version
+   captureProfile,playwrightVersion:require("playwright/package.json").version,
+   captureMode:deterministicCapture?"deterministic-frame-rendering":"playwright-real-recording",
+   deterministicCaptureScript:deterministicCaptureScript?path.relative(path.dirname(path.resolve(sourcePath)),deterministicCaptureScript):null
   });
   onProgress(1,"启动浏览器","创建原生分辨率网页录制环境");
   browser=await chromium.launch({headless:true,args:[
@@ -293,7 +389,7 @@ async function renderVideo(options){
    deviceScaleFactor:captureProfile.deviceScaleFactor,
    colorScheme:"light",
    reducedMotion:"no-preference",
-   recordVideo:{dir:recordDir,size:{width:logicalWidth,height:logicalHeight},fps}
+   ...(deterministicCapture?{}:{recordVideo:{dir:recordDir,size:{width:logicalWidth,height:logicalHeight},fps}})
   });
   logger.info("浏览器录制配置",{
    browserVersion:browser.version(),
@@ -302,9 +398,10 @@ async function renderVideo(options){
    deviceScaleFactor:captureProfile.deviceScaleFactor,captureFps:fps
   });
   const page=await context.newPage();
-  recording=page.video();
+  recording=deterministicCapture?null:page.video();
   const pageErrors=[],networkIssues=[],consoleIssues=[],frameEvents=[];
   const keepLast=(list,item,max=80)=>{list.push(item);if(list.length>max)list.shift();};
+  if(deterministicCapture)await page.addInitScript(()=>{window.__OFFLINE_CAPTURE=true;});
   await page.addInitScript(()=>{
    const store=window.__weddingCaptureDiagnostics={
     events:[],resourceErrors:[],unhandledRejections:[],
@@ -349,7 +446,7 @@ async function renderVideo(options){
     stats.lastTimestamp=timestamp;
     requestAnimationFrame(measureFrame);
    };
-   requestAnimationFrame(measureFrame);
+   if(!window.__OFFLINE_CAPTURE)requestAnimationFrame(measureFrame);
   });
   page.on("pageerror",error=>{
    keepLast(pageErrors,{message:error.message,stack:error.stack||""});
@@ -419,6 +516,84 @@ async function renderVideo(options){
   });
   onProgress(5,"等待网页自动播放","网页已加载，正在检查主页面和 iframe 的播放器状态");
 
+  if(deterministicCapture){
+   const playerFrame=await findDeterministicPlayerFrame(page);
+   if(!playerFrame)throw new Error("项目包含离线逐帧渲染接口，但 20 秒内没有找到 weddingPlayer.renderAt/renderCapture。请检查邀请函 iframe 和播放器脚本是否加载成功。");
+   onProgress(6,"准备逐帧渲染","正在等待邀请函素材、字体和动画资源准备完成");
+   const playerInfo=await playerFrame.evaluate(async()=>{
+    const player=window.weddingPlayer;
+    await player.ready;
+    return {
+     totalMs:Number(player.totalMs)||0,
+     state:player.state||"",
+     metrics:player.metrics||null,
+     errors:Array.isArray(player.errors)?player.errors.slice():[]
+    };
+   });
+   if(!Number.isFinite(playerInfo.totalMs)||playerInfo.totalMs<=0){
+    throw new Error("邀请函播放器没有提供有效的 totalMs 动画总时长。");
+   }
+   if(playerInfo.errors.length){
+    throw new Error("邀请函素材准备失败："+playerInfo.errors.join("；"));
+   }
+   const totalMs=playerInfo.totalMs;
+   const expectedFrames=Math.max(1,Math.ceil(totalMs*fps/1000));
+   const durationHint=expectedFrames/fps;
+   const offlineCaptureStartedAt=Date.now();
+   logger.info("离线逐帧渲染开始",{
+    playerFrameUrl:playerFrame.url(),playerState:playerInfo.state,
+    totalMs,durationSeconds:Number((totalMs/1000).toFixed(3)),
+    fps,expectedFrames,frameIntervalMs:Number((1000/fps).toFixed(3)),
+    captureSize:{width:logicalWidth,height:logicalHeight},
+    playerMetrics:playerInfo.metrics
+   });
+   const frameStream=createDeterministicFrameStream({
+    page,frame:playerFrame,fps,frameCount:expectedFrames,
+    onProgress:(progress,label,message,extra)=>onProgress(progress,label,message,extra)
+   });
+   const encoded=await transcodeFrameStream({
+    frames:frameStream,outputPath,musicPath,fps,width,height,
+    expectedFrames,durationHint,logger,
+    onProgress:(ratio,message)=>onProgress(82+ratio*16,"转换 MP4",message,{
+     renderedFrames:expectedFrames,encodedDurationSeconds:Number((ratio*durationHint).toFixed(2))
+    })
+   });
+   const captureSeconds=(Date.now()-offlineCaptureStartedAt)/1000;
+   const taskSeconds=(Date.now()-taskStartedAt)/1000;
+   const finalState=await readPlaybackState(page);
+   const metrics={
+    mode:"deterministic-player-frame-rendering",
+    endReason:"player.totalMs 时间轴完成",
+    durationSeconds:encoded.durationSeconds,
+    captureSeconds:Number(captureSeconds.toFixed(2)),
+    detectedDelaySeconds:0,
+    frames:encoded.frames,
+    expectedFrames,
+    encodedFrames:encoded.encodedFrames,
+    fps,
+    avgFps:Number((encoded.frames/(encoded.durationSeconds||1)).toFixed(2)),
+    totalSeconds:Number(taskSeconds.toFixed(2)),
+    outputSizeBytes:encoded.size,
+    captureWidth:logicalWidth,
+    captureHeight:logicalHeight,
+    nativeResolution:captureProfile.nativeResolution,
+    pageHeight:playerInfo.metrics?.pageHeight||finalState.pageHeight,
+    viewportHeight:playerInfo.metrics?.viewportHeight||finalState.viewportHeight,
+    maxScroll:playerInfo.metrics?.endY||finalState.maxScroll,
+    chapterCount:playerInfo.metrics?.chapters||finalState.chapterCount,
+    frameCount:finalState.frameCount,
+    selectedFrameUrl:playerFrame.url(),
+    playerKey:"weddingPlayer",
+    playerState:finalState.playerState,
+    renderTimelineMs:totalMs,
+    renderMethod:"player.renderAt + player.renderCapture",
+    pageErrors:pageErrors.map(item=>item.message)
+   };
+   logger.info("导出指标",metrics);
+   onProgress(100,"完成","逐帧 MP4 已生成，实际时长 "+encoded.durationSeconds.toFixed(2)+" 秒",metrics);
+   return;
+  }
+
   const maxRecordingMs=300000;
   const startupTimeoutMs=30000;
   const markerTailMs=1200;
@@ -443,13 +618,13 @@ async function renderVideo(options){
      playerTime:state.playerTime,playerPaused:state.playerPaused,
      started:state.started,ended:state.ended,
      loadingText:state.loadingText,playerErrors:state.playerErrors,
-     scrollables:state.scrollables,progress:state.progress,
+     animationFrameStats:state.animationFrameStats||{},scrollables:state.scrollables,progress:state.progress,
      pageHeight:state.pageHeight,viewportHeight:state.viewportHeight,
      frames:state.frameSnapshots.map(frame=>({
       frameIndex:frame.frameIndex,url:frame.frameUrl,readyState:frame.readyState,
       playerFound:frame.playerFound,playerKey:frame.playerKey,
       playerState:frame.playerState,playerTime:frame.playerTime,
-      loadingText:frame.loadingText,scriptSources:(frame.scripts||[]).map(script=>script.src),
+      loadingText:frame.loadingText,animationFrameStats:frame.animationFrameStats||{},scriptSources:(frame.scripts||[]).map(script=>script.src),
       evaluateError:frame.evaluateError
      }))
     });
