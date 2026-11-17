@@ -105,3 +105,17 @@ h2 { margin: 0; font-size: 17px; font-weight: 650; }
   .status-card { display: block; }
   .footer { flex-direction: column; gap: 8px; }
 }
+
+/* 文件选择与成品预览 */
+.picker-row{display:flex;align-items:center;gap:12px;min-height:44px;padding:6px 10px;border:1px dashed #d9c9b9;border-radius:9px;background:#fff}
+.secondary-button{min-height:34px;padding:0 14px;border:1px solid #d8c3b3;border-radius:7px;color:#81553f;background:#fbf6f0;cursor:pointer;font-size:12px;white-space:nowrap}
+.secondary-button:hover{background:#f4e9df}
+.file-name{min-width:0;overflow:hidden;color:#81796e;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.field-full{grid-column:1/-1}
+.result-panel{margin-top:20px;padding-top:17px;border-top:1px solid #f0ece5}
+.result-panel h3{margin:0 0 12px;font-size:13px}
+.result-panel video{display:block;width:100%;max-height:520px;aspect-ratio:9/16;object-fit:contain;border-radius:9px;background:#171512}
+.result-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
+.download-link{margin:0;padding:9px 12px;border-radius:7px;color:#fff;background:#8e5a42;text-decoration:none;font-size:11px}
+.result-actions .secondary-button{min-height:34px}
+@media(max-width:560px){.picker-row{align-items:flex-start;flex-direction:column}.file-name{max-width:100%}.field-full{grid-column:auto}}
