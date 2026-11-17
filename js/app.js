@@ -78,7 +78,10 @@ async function loadHistory(){
    const date=item.startedAt?new Date(item.startedAt).toLocaleString():"时间未知";
    const status=item.status==="completed"?"成功":"失败";
    const dimensions=item.width&&item.height?item.width+" × "+item.height:"尺寸未知";
-   const details=[dimensions,(item.fps||"-")+" FPS",formatSeconds(item.duration),item.frameCount?item.frameCount+" 帧":"帧数未知"].join(" · ");
+   const capture=item.metrics?.captureWidth&&item.metrics?.captureHeight
+    ?("采集 "+item.metrics.captureWidth+" × "+item.metrics.captureHeight+(item.metrics.nativeResolution?" · 原生采集":" · 缩放采集"))
+    :"";
+   const details=[dimensions,capture,(item.fps||"-")+" FPS",formatSeconds(item.duration),item.frameCount?item.frameCount+" 帧":"帧数未知"].filter(Boolean).join(" · ");
    return '<article class="history-item"><div class="history-top"><strong>'+escapeHtml(item.outputName||"未命名视频")+'</strong><span class="history-status '+(item.status==="completed"?"done":"failed")+'">'+status+'</span></div><div class="history-meta">'+escapeHtml(date)+' · 导出耗时 <b>'+formatElapsed(item.elapsedMs)+'</b></div><div class="history-meta">'+escapeHtml(details)+' · 输出帧率 '+escapeHtml(item.avgFps||"-")+'</div>'+(item.error?'<div class="history-error">'+escapeHtml(item.error)+'</div>':"")+'</article>';
   }).join("");
  }catch(error){
@@ -276,7 +279,10 @@ async function pollJob(jobId){
    clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
    setStatus("success","导出完成");setProgress(100,"视频已生成");
    $("#video-duration").textContent=formatSeconds(result.duration);
-   showMessage("导出成功。视频已按网页实际播放节奏生成，可以直接播放、拖动进度或下载 MP4。","success");
+   const captureInfo=result.metrics?.captureWidth&&result.metrics?.captureHeight
+    ?("原始采集："+result.metrics.captureWidth+" × "+result.metrics.captureHeight+(result.metrics.nativeResolution?"（原生高清采集）。":"（采集后缩放）。"))
+    :"";
+   showMessage("导出成功。"+captureInfo+"视频已按网页实际播放节奏生成，可以直接播放、拖动进度或下载 MP4。","success");
    showResult(result);loadHistory();
   }
   if(result.status==="failed"){
