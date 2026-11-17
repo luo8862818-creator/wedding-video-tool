@@ -75,7 +75,11 @@ async function renderVideo(options){
    await Promise.all([...document.images].map(img=>img.decode().catch(()=>{})));
    const p=window.weddingPlayer;
    return {
-    supported:Boolean(p&&typeof p.renderAt==="function"),\n    hasRenderCapture:typeof p?.renderCapture==="function",\n    playerKeys:p?Object.keys(p):[],\n    readyState:document.readyState,\n    scripts:[...document.scripts].map(s=>s.src),
+    supported:Boolean(p&&typeof p.renderAt==="function"),
+    hasRenderCapture:typeof p?.renderCapture==="function",
+    playerKeys:p?Object.keys(p):[],
+    readyState:document.readyState,
+    scripts:[...document.scripts].map(s=>s.src),
     totalMs:p?.totalMs||0,
     errors:p?.errors||[],
     pageHeight:document.documentElement.scrollHeight,
