@@ -3,7 +3,7 @@ const form=$("#export-form"),exportButton=$("#export-button"),preset=$("#preset"
 const statusPill=$("#status-pill"),progressText=$("#progress-text"),progressValue=$("#progress-value"),progressBar=$("#progress-bar"),stepText=$("#step-text"),fileText=$("#file-text"),message=$("#message");
 const folderInput=$("#project-folder"),musicInput=$("#music-file");
 const presets={portrait:{width:1080,height:1920,label:"1080 × 1920"},landscape:{width:1920,height:1080,label:"1920 × 1080"},square:{width:1080,height:1080,label:"1080 × 1080"}};
-let workspaceId=null,musicPath="",pollingTimer=null;
+let workspaceId=null,musicPath="",pollingTimer=null,detectedMode=null;
 function setStatus(type,label){statusPill.className="status-pill "+type;statusPill.textContent=label;}
 function showMessage(text,type=""){message.textContent=text;message.className="message "+type;}
 function setProgress(value,label){const n=Math.max(0,Math.min(100,Math.round(Number(value)||0)));progressBar.style.width=n+"%";progressValue.textContent=n+"%";if(label)progressText.textContent=label;}
@@ -36,8 +36,11 @@ analyzeButton.addEventListener("click",async()=>{
  analyzeButton.disabled=true;analyzeButton.textContent="分析中…";analysisLabel.textContent="正在启动浏览器并模拟网页播放，请保持页面打开。";showMessage("正在分析网页的自动播放时长，这一步可能需要几十秒。");
  try{
   const result=await requestJson("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({workspaceId,sourcePath:$("#source-path").value.trim()})});
+  detectedMode=result.mode||null;
+  if(detectedMode==="auto-scroll"){speed.value="1";speed.disabled=true;}
+  else{speed.disabled=false;}
   duration.value=String(result.playbackSeconds);updateEstimate();
-  analysisLabel.textContent="检测完成："+result.details+"。分析耗时 "+formatElapsed(result.analysisMs)+"。";
+  analysisLabel.textContent="检测完成："+result.details+"。分析耗时 "+formatElapsed(result.analysisMs)+(detectedMode==="auto-scroll"?"。真实播放模式固定 1×，以保留网页原始速度。":"。时间轴模式支持调整播放速度。");
   showMessage("网页时长检测完成，已自动填入 "+formatSeconds(result.playbackSeconds)+"。你仍可手动修改。","success");
  }catch(error){
   analysisLabel.textContent="自动检测未完成，可手动填写时长。";
@@ -62,7 +65,7 @@ async function uploadProject(files){
 }
 folderInput.addEventListener("change",async()=>{
  const files=[...folderInput.files];if(!files.length)return;
- $("#folder-name").textContent="准备导入 "+files.length+" 个文件……";$("#source-path").value="";workspaceId=null;musicPath="";
+ $("#folder-name").textContent="准备导入 "+files.length+" 个文件……";$("#source-path").value="";workspaceId=null;musicPath="";detectedMode=null;speed.disabled=false;
  $("#choose-folder").disabled=true;$("#choose-music").disabled=true;showMessage("正在导入完整项目文件夹，文件较多时请稍候……");
  try{const result=await uploadProject(files);workspaceId=result.workspaceId;$("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";$("#music-name").textContent="未选择音乐";showMessage("项目导入成功，已识别根目录 index.html。");}
  catch(error){showMessage(error.message,"error");}
