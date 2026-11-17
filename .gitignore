@@ -1,0 +1,26 @@
+
+# Node.js 依赖包
+node_modules/
+
+# 视频导出文件
+output/*
+!output/.gitkeep
+
+# 临时渲染文件
+temp/
+frames/
+
+# 日志文件
+*.log
+logs/
+
+# 环境配置
+.env
+.env.*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器配置
+.vscode/
