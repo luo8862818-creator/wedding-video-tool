@@ -52,7 +52,12 @@
         <div class="status-header"><h2>导出任务</h2><span id="status-pill" class="status-pill idle">等待任务</span></div>
         <div class="preview-frame" id="poster-preview"><div class="preview-inner"><span class="preview-spark">✦</span><strong>YOUR<br>WEDDING<br>FILM</strong><small>MADE WITH LOVE</small></div><span class="preview-size">9:16</span></div>
         <div class="progress-block"><div class="progress-label"><span id="progress-text">尚未开始</span><strong id="progress-value">0%</strong></div><div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div></div>
-        <div class="task-details"><div><span>当前步骤</span><strong id="step-text">等待导出</strong></div><div><span>输出文件</span><strong id="file-text">尚未生成</strong></div></div>
+        <div class="task-details"><div><span>当前步骤</span><strong id="step-text">等待导出</strong></div><div><span>输出文件</span><strong id="file-text">尚未生成</strong></div><div><span>本次耗时</span><strong id="elapsed-text">00:00</strong></div></div>
+        <section class="history-panel">
+          <div class="history-heading"><h3>最近导出记录</h3><button id="refresh-history" class="text-button" type="button">刷新</button></div>
+          <p class="history-hint">自动保存最近 100 次任务，包含成功和失败记录。</p>
+          <div id="history-list" class="history-list"><span class="history-empty">正在读取历史记录……</span></div>
+        </section>
         <div id="message" class="message" role="status" aria-live="polite">选择项目文件夹后即可开始导出。</div>
         <section id="result-panel" class="result-panel" hidden>
           <h3>视频预览</h3>
