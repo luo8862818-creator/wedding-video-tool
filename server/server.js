@@ -90,11 +90,20 @@ app.use(express.static(ROOT,{index:"index.html",dotfiles:"ignore"}));
 app.get("/api/health",(_req,res)=>res.json({ok:true,service:"wedding-video-tool"}));
 app.get("/api/history",(_req,res)=>res.json({items:readHistory()}));
 
-app.post("/api/workspaces",(_req,res)=>{
- const id=randomUUID(),workspacePath=path.join(WORKSPACE_DIR,id);
- fs.mkdirSync(workspacePath,{recursive:true});
- workspaces.set(id,{path:workspacePath,sourcePath:path.join(workspacePath,"index.html"),musicPath:null,fileCount:0,ready:false});
- res.status(201).json({workspaceId:id});
+app.post("/api/workspaces",async(_req,res)=>{
+ try{
+  if(activePreviewWorkspaceId){
+   const previousWorkspace=workspaces.get(activePreviewWorkspaceId);
+   if(previousWorkspace)await closeWorkspacePreview(previousWorkspace);
+   activePreviewWorkspaceId=null;
+  }
+  const id=randomUUID(),workspacePath=path.join(WORKSPACE_DIR,id);
+  fs.mkdirSync(workspacePath,{recursive:true});
+  workspaces.set(id,{path:workspacePath,sourcePath:path.join(workspacePath,"index.html"),musicPath:null,fileCount:0,ready:false});
+  res.status(201).json({workspaceId:id});
+ }catch(error){
+  return fail(res,500,"创建项目工作区失败："+error.message);
+ }
 });
 app.delete("/api/workspaces/:id",async(req,res)=>{
  const workspace=workspaces.get(req.params.id);
