@@ -58,11 +58,10 @@ async function renderVideo(options){
    await page.evaluate(()=>{const p=window.weddingPlayer;p.paused=true;if(p.raf)cancelAnimationFrame(p.raf);p.raf=null;p.last=null;p.chapters?.forEach(s=>{s.seen=false;if(s.header){s.header.style.opacity="";s.header.style.transform="";}});});
    await renderTimelineFrame(page,0);
   }else{
-   // 页面启动延时也走虚拟时间：例如模板的 setTimeout(start, 2000)。
-   // 不使用真实等待，避免截图慢时网页动画先于视频帧播放完毕。
-   await page.clock.runFor(2000*playbackRate);
+   // 不预先快进启动延迟。第 0 帧必须捕获网页初始画面，启动 setTimeout 也计入视频时长。
+   // 随后的每帧再按 playbackRate 推进虚拟时钟，保证分析时长与导出时长一致。
   }
-  onProgress(5,"开始逐帧渲染",mode==="timeline"?"使用时间轴接口并推进虚拟时钟":"使用虚拟时钟逐帧驱动网页自己的滚动、CSS 动画和 requestAnimationFrame");
+  onProgress(5,"开始逐帧渲染",mode==="timeline"?"使用时间轴接口并推进虚拟时钟":"从网页初始状态开始，逐帧驱动滚动、CSS 动画和 requestAnimationFrame");
   encoder=startVideoEncoder({outputPath,fps,duration,musicPath,expectedFrames:frameCount});
   const frameInterval=1000/fps;
   for(let frame=0;frame<frameCount;frame++){
