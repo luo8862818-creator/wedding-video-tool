@@ -110,7 +110,7 @@ async function renderVideo(options){
    });
   });
   await settleFrame(page,0);
-  encoder=startVideoEncoder({outputPath,fps,duration,musicPath});
+  encoder=startVideoEncoder({outputPath,fps,duration,musicPath,expectedFrames:frameCount});
   onProgress(5,"逐帧渲染与编码","共 "+frameCount+" 帧；按同一时间轴顺序采集，不并行跳帧");
   for(let frame=0;frame<frameCount;frame++){
    // 以输出视频的时间映射到完整网页时间轴，保证首尾覆盖。
@@ -157,7 +157,7 @@ async function renderVideo(options){
    throw new Error("视频关键帧未覆盖开场、滚动和结尾阶段："+JSON.stringify(samples));
   }
   onProgress(96,"封装视频","正在等待 FFmpeg 完成 MP4 编码");
-  await encoder.finish();encoder=null;
+  const encoded=await encoder.finish();encoder=null;\n  if(encoded.frames!==frameCount)throw new Error("MP4 帧数不一致：渲染 "+frameCount+" 帧，编码 "+encoded.frames+" 帧。");
   const elapsedMs=Date.now()-startedAt;
   const metrics={
    frames:frameCount,workerCount:1,
