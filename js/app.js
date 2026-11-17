@@ -8,6 +8,23 @@ function setStatus(type,label){statusPill.className="status-pill "+type;statusPi
 function showMessage(text,type=""){message.textContent=text;message.className="message "+type;}
 function setProgress(value,label){const n=Math.max(0,Math.min(100,Math.round(Number(value)||0)));progressBar.style.width=n+"%";progressValue.textContent=n+"%";if(label)progressText.textContent=label;}
 function formatSeconds(value){const s=Math.max(0,Math.round(value));return s>=60?Math.floor(s/60)+"分"+(s%60?String(s%60)+"秒":""):s+"秒";}
+function formatElapsed(ms){const total=Math.max(0,Math.floor((Number(ms)||0)/1000)),h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;return h?String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"):String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");}
+function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));}
+async function loadHistory(){
+ const list=$("#history-list");if(!list)return;
+ try{
+  const data=await requestJson("/api/history");
+  if(!data.items?.length){list.innerHTML='<span class="history-empty">暂无导出记录，完成第一次导出后会自动记录。</span>';return;}
+  list.innerHTML=data.items.slice(0,10).map(item=>{
+   const date=item.startedAt?new Date(item.startedAt).toLocaleString():"时间未知";
+   const status=item.status==="completed"?"成功":"失败";
+   const dimensions=(item.width&&item.height)?item.width+" × "+item.height:"尺寸未知";
+   const details=[dimensions,(item.fps||"-")+" FPS",formatSeconds(item.duration||0),item.frameCount?item.frameCount+" 帧":"帧数未知"].join(" · ");
+   return '<article class="history-item"><div class="history-top"><strong>'+escapeHtml(item.outputName||"未命名视频")+'</strong><span class="history-status '+(item.status==="completed"?"done":"failed")+'">'+status+'</span></div><div class="history-meta">'+escapeHtml(date)+' · 耗时 <b>'+formatElapsed(item.elapsedMs)+'</b></div><div class="history-meta">'+escapeHtml(details)+' · 平均 '+escapeHtml(item.avgFps||"-")+' 帧/秒</div>'+(item.error?'<div class="history-error">'+escapeHtml(item.error)+'</div>':"")+'</article>';
+  }).join("");
+ }catch(error){list.innerHTML='<span class="history-empty">读取历史记录失败：'+escapeHtml(error.message)+'</span>';}
+}
+$("#refresh-history")?.addEventListener("click",loadHistory);
 function updateEstimate(){$("#resolution-label").textContent=presets[preset.value].label;const base=Number(duration.value)||0,multiplier=Number(speed.value)||1;$("#actual-duration").textContent=formatSeconds(base/multiplier);}
 [preset,duration,speed].forEach(el=>el.addEventListener("change",updateEstimate));duration.addEventListener("input",updateEstimate);
 $("#choose-folder").addEventListener("click",()=>folderInput.click());
@@ -51,9 +68,9 @@ function showResult(result){
 }
 async function pollJob(jobId){
  try{const response=await fetch("/api/jobs/"+encodeURIComponent(jobId));const result=await response.json();if(!response.ok)throw new Error(result.error||"无法获取任务状态");
- setProgress(result.progress,result.message);stepText.textContent=result.stepLabel||"处理中";fileText.textContent=result.outputName||"生成中";
- if(result.status==="completed"){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("success","导出完成");setProgress(100,"视频已生成");showMessage("导出成功。现在可以直接在下方播放、拖动进度或下载 MP4。","success");showResult(result);}
- if(result.status==="failed"){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("error","导出失败");showMessage(result.error||"导出失败，请查看服务端终端日志。","error");}
+ setProgress(result.progress,result.message);stepText.textContent=result.stepLabel||"处理中";fileText.textContent=result.outputName||"生成中";$("#elapsed-text").textContent=formatElapsed(result.elapsedMs);
+ if(result.status==="completed"){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("success","导出完成");setProgress(100,"视频已生成");showMessage("导出成功。现在可以直接在下方播放、拖动进度或下载 MP4。","success");showResult(result);loadHistory();}
+ if(result.status==="failed"){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("error","导出失败");showMessage(result.error||"导出失败，请查看服务端终端日志。","error");$("#elapsed-text").textContent=formatElapsed(result.elapsedMs);loadHistory();}
  }catch(error){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("error","连接中断");showMessage(error.message,"error");}
 }
 form.addEventListener("submit",async event=>{
@@ -66,4 +83,4 @@ form.addEventListener("submit",async event=>{
  try{const result=await requestJson("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});setStatus("running","正在导出");showMessage("任务已启动。正在按设定速度逐帧渲染，请保持服务运行。");pollingTimer=setInterval(()=>pollJob(result.jobId),700);await pollJob(result.jobId);}
  catch(error){exportButton.disabled=false;setStatus("error","启动失败");showMessage(error.message,"error");}
 });
-updateEstimate();
+updateEstimate();loadHistory();
