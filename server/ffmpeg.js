@@ -33,10 +33,11 @@ function runFfmpeg(args,{onProgress=()=>{}}={}){
  });
 }
 
-async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{}}){
+async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,trimStartSeconds=0,durationHint,onProgress=()=>{}}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!fs.existsSync(inputPath)||fs.statSync(inputPath).size===0)throw new Error("浏览器录制文件不存在或为空，无法生成 MP4。");
- const filter="fps="+fps+",scale="+width+":"+height+":force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
+ const trimFilter=trimStartSeconds>0.02?"trim=start="+trimStartSeconds.toFixed(3)+",setpts=PTS-STARTPTS,":"";
+ const filter=trimFilter+"fps="+fps+",scale="+width+":"+height+":force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
  const args=["-y","-hide_banner","-loglevel","error","-i",inputPath];
  if(musicPath)args.push("-stream_loop","-1","-i",musicPath);
  args.push("-map","0:v:0");
@@ -53,8 +54,8 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
  }});
  if(!fs.existsSync(outputPath)||fs.statSync(outputPath).size<1024)throw new Error("FFmpeg 未生成有效 MP4 文件。");
 
- // 再解码一次成品，确认文件可读，并以实际输出帧数计算时长。
- // 不再用 ceil(duration * fps) 与 FFmpeg 的最后一帧做容易产生 1 帧误差的比较。
+ // 对成品完整解码，读取 FFmpeg 实际输出帧数。
+ // 不再使用 ceil(duration * fps) 做严格比较，避免小数时长在最后一帧产生 ±1 帧误报。
  const checked=await runFfmpeg([
   "-hide_banner","-loglevel","error","-i",outputPath,
   "-map","0:v:0","-progress","pipe:2","-f","null","-"
