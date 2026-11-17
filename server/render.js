@@ -106,10 +106,29 @@ async function closeHttpServer(server){
  });
 }
 
+function resolveCaptureProfile(sourcePath,outputWidth,outputHeight){
+ const html=fs.readFileSync(sourcePath,"utf8").slice(0,65536);
+ const marker=html.match(/<meta\\s+name=["']wedding-video-viewport["']\\s+content=["'](\\d{2,4})x(\\d{2,4})["'][^>]*>/i);
+ if(marker){
+  const width=Number(marker[1]),height=Number(marker[2]);
+  if(width===outputWidth&&height===outputHeight){
+   return {width,height,deviceScaleFactor:1,nativeResolution:true};
+  }
+ }
+ const scale=2.4;
+ return {
+  width:Math.max(1,Math.round(outputWidth/scale)),
+  height:Math.max(1,Math.round(outputHeight/scale)),
+  deviceScaleFactor:scale,
+  nativeResolution:false
+ };
+}
+
 async function renderVideo(options){
  const {sourcePath,musicPath,outputPath,fps,width,height,onProgress=()=>{}}=options;
- const logicalWidth=Math.max(1,Math.round(width/2.4));
- const logicalHeight=Math.max(1,Math.round(height/2.4));
+ const captureProfile=resolveCaptureProfile(sourcePath,width,height);
+ const logicalWidth=captureProfile.width;
+ const logicalHeight=captureProfile.height;
  const recordDir=fs.mkdtempSync(path.join(os.tmpdir(),"wedding-video-record-"));
  let browser=null,context=null,sourceServer=null,recording=null;
  const taskStartedAt=Date.now();
@@ -122,11 +141,10 @@ async function renderVideo(options){
    "--disable-backgrounding-occluded-windows",
    "--disable-features=CalculateNativeWinOcclusion"
   ]});
-  // Playwright 不会把小 viewport 放大填满更大的 recordVideo 画布，只会把页面画面放在左上角。
-  // 这里让录制尺寸与逻辑 viewport 一致，再由 FFmpeg 放大到目标视频尺寸。
+  // 默认沿用移动端 CSS 视口；带有 wedding-video-viewport 标记且与输出尺寸一致的测试页，直接以目标像素尺寸录制。
   context=await browser.newContext({
    viewport:{width:logicalWidth,height:logicalHeight},
-   deviceScaleFactor:2.4,
+   deviceScaleFactor:captureProfile.deviceScaleFactor,
    colorScheme:"light",
    reducedMotion:"no-preference",
    recordVideo:{dir:recordDir,size:{width:logicalWidth,height:logicalHeight}}
@@ -276,6 +294,9 @@ async function renderVideo(options){
    avgFps:Number((encoded.frames/(encoded.durationSeconds||1)).toFixed(2)),
    totalSeconds:Number(taskSeconds.toFixed(2)),
    outputSizeBytes:encoded.size,
+   captureWidth:logicalWidth,
+   captureHeight:logicalHeight,
+   nativeResolution:captureProfile.nativeResolution,
    pageHeight:latestState.pageHeight,
    viewportHeight:latestState.viewportHeight,
    maxScroll:latestState.maxScroll,
