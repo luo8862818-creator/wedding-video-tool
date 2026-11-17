@@ -7,7 +7,7 @@ let workspaceId=null,musicPath="",pollingTimer=null,detectedMode=null;
 function setStatus(type,label){statusPill.className="status-pill "+type;statusPill.textContent=label;}
 function showMessage(text,type=""){message.textContent=text;message.className="message "+type;}
 function setProgress(value,label){const n=Math.max(0,Math.min(100,Math.round(Number(value)||0)));progressBar.style.width=n+"%";progressValue.textContent=n+"%";if(label)progressText.textContent=label;}
-function formatSeconds(value){const s=Math.max(0,Math.round(value));return s>=60?Math.floor(s/60)+"分"+(s%60?String(s%60)+"秒":""):s+"秒";}
+function formatSeconds(value){const s=Math.max(0,Math.round((Number(value)||0)*100)/100),minutes=Math.floor(s/60),seconds=Number((s%60).toFixed(2)),display=Number.isInteger(seconds)?String(seconds):seconds.toFixed(2).replace(/0+$/,"").replace(/\\.$/,"");return minutes?minutes+"分"+(seconds?display+"秒":""):display+"秒";}
 function formatElapsed(ms){const total=Math.max(0,Math.floor((Number(ms)||0)/1000)),h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;return h?String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"):String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");}
 function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));}
 async function loadHistory(){
