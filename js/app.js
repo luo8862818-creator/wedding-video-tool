@@ -8,7 +8,7 @@ const presets={
  landscape:{width:1920,height:1080,label:"1920 × 1080"},
  square:{width:1080,height:1080,label:"1080 × 1080"}
 };
-let workspaceId=null,pollingTimer=null;
+let workspaceId=null,pollingTimer=null,isImporting=false;
 
 function setStatus(type,label){statusPill.className="status-pill "+type;statusPill.textContent=label;}
 function showMessage(text,type=""){message.textContent=text;message.className="message "+type;}
@@ -92,7 +92,7 @@ $("#choose-music").addEventListener("click",()=>musicInput.click());
 singleHtmlInput.addEventListener("change",async()=>{
  const file=singleHtmlInput.files[0];
  if(!file)return;
- workspaceId=null;folderInput.value="";sourcePathInput.value="";
+ workspaceId=null;folderInput.value="";sourcePathInput.value="";musicInput.value="";isImporting=true;
  exportButton.disabled=true;
  $("#choose-html").disabled=true;$("#choose-folder").disabled=true;$("#choose-music").disabled=true;
  $("#html-file-name").textContent=file.name+" · 正在导入";
@@ -110,6 +110,7 @@ singleHtmlInput.addEventListener("change",async()=>{
   workspaceId=null;$("#html-file-name").textContent=file.name+" · 导入失败";
   showMessage(error.message,"error");
  }finally{
+  isImporting=false;singleHtmlInput.value="";
   exportButton.disabled=false;$("#choose-html").disabled=false;$("#choose-folder").disabled=false;$("#choose-music").disabled=false;
  }
 });
@@ -134,7 +135,7 @@ async function uploadProject(files){
 folderInput.addEventListener("change",async()=>{
  const files=[...folderInput.files];
  if(!files.length)return;
- workspaceId=null;singleHtmlInput.value="";sourcePathInput.value="";
+ workspaceId=null;singleHtmlInput.value="";sourcePathInput.value="";musicInput.value="";isImporting=true;
  exportButton.disabled=true;
  $("#choose-html").disabled=true;$("#choose-folder").disabled=true;$("#choose-music").disabled=true;
  $("#folder-name").textContent="准备导入 "+files.length+" 个文件……";
@@ -150,6 +151,7 @@ folderInput.addEventListener("change",async()=>{
   workspaceId=null;$("#folder-name").textContent="导入失败";
   showMessage(error.message,"error");
  }finally{
+  isImporting=false;folderInput.value="";
   exportButton.disabled=false;$("#choose-html").disabled=false;$("#choose-folder").disabled=false;$("#choose-music").disabled=false;
  }
 });
@@ -180,6 +182,7 @@ musicInput.addEventListener("change",async()=>{
   $("#music-name").textContent=file.name+" · 导入失败";
   showMessage(error.message,"error");
  }finally{
+  musicInput.value="";
   $("#choose-music").disabled=false;
  }
 });
@@ -225,6 +228,7 @@ async function pollJob(jobId){
 
 form.addEventListener("submit",async event=>{
  event.preventDefault();
+ if(isImporting){showMessage("文件仍在导入，请等待导入完成后再开始导出。","error");return;}
  if(pollingTimer)clearInterval(pollingTimer);
  const presetConfig=presets[preset.value],sourcePath=sourcePathInput.value.trim();
  if(!workspaceId&&!sourcePath){
