@@ -75,7 +75,7 @@ async function renderVideo(options){
    await Promise.all([...document.images].map(img=>img.decode().catch(()=>{})));
    const p=window.weddingPlayer;
    return {
-    supported:Boolean(p&&typeof p.renderAt==="function"&&typeof p.renderCapture==="function"),
+    supported:Boolean(p&&typeof p.renderAt==="function"),\n    hasRenderCapture:typeof p?.renderCapture==="function",\n    playerKeys:p?Object.keys(p):[],\n    readyState:document.readyState,\n    scripts:[...document.scripts].map(s=>s.src),
     totalMs:p?.totalMs||0,
     errors:p?.errors||[],
     pageHeight:document.documentElement.scrollHeight,
@@ -86,7 +86,7 @@ async function renderVideo(options){
     metrics:p?.metrics||null
    };
   });
-  if(!ready.supported)throw new Error("邀请函没有提供完整的 weddingPlayer.renderAt()/renderCapture() 时间轴接口。");
+  if(!ready.supported)throw new Error("邀请函时间轴接口未加载：需要 weddingPlayer.renderAt()。检测信息："+JSON.stringify({readyState:ready.readyState,playerKeys:ready.playerKeys,scripts:ready.scripts,errors:ready.errors}));
   if(ready.errors.length)throw new Error("邀请函素材加载失败："+ready.errors.join("；"));
   if(!ready.totalMs||ready.totalMs<=0)throw new Error("邀请函时间轴总时长无效。");
   if(ready.chapterCount<2||ready.scrollTarget<10)throw new Error("页面没有检测到有效的多章节滚动内容。章节数："+ready.chapterCount+"，滚动距离："+ready.scrollTarget+"px。");
