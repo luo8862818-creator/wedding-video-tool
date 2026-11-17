@@ -27,7 +27,7 @@ async function settleFrame(page,timeMs){
   const result=p.renderAt(ms);
   if(typeof p.renderCapture==="function")await p.renderCapture();
   // 等待 DOM、图片解码和浏览器合成器完成本帧更新，再进行截图。
-  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  await new Promise(resolve=>requestAnimationFrame(resolve));
   return {
    state:result.state,
    y:result.y,
