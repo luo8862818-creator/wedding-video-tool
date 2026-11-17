@@ -88,6 +88,26 @@ app.post("/api/workspaces/:id/complete",(req,res)=>{
  workspace.ready=true;
  res.json({ok:true,fileCount:workspace.fileCount,sourceName:"index.html"});
 });
+
+/* 为已导入的项目提供同源预览地址，HTML 内的相对 CSS、JS、图片和字体路径可正常加载。 */
+app.use("/workspace-preview/:id",(req,res,next)=>{
+ const workspace=workspaces.get(req.params.id);
+ if(!workspace||!workspace.ready)return fail(res,404,"预览项目不存在或尚未导入完成，请重新导入项目。");
+ const requestedPath=req.originalUrl.split("?")[0];
+ if(requestedPath===req.baseUrl)return res.redirect(302,req.baseUrl+"/");
+ if(!workspace.previewStatic){
+  workspace.previewStatic=express.static(workspace.path,{
+   index:"index.html",
+   dotfiles:"ignore",
+   fallthrough:false,
+   setHeaders(response){
+    response.setHeader("Cache-Control","no-store");
+    response.setHeader("X-Content-Type-Options","nosniff");
+   }
+  });
+ }
+ workspace.previewStatic(req,res,next);
+});
 app.put("/api/workspaces/:id/music",express.raw({type:"application/octet-stream",limit:"150mb"}),(req,res)=>{
  const workspace=workspaces.get(req.params.id);
  if(!workspace)return fail(res,404,"项目工作区不存在，请先导入 HTML 文件或项目文件夹。");
