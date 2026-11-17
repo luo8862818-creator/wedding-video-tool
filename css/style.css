@@ -444,3 +444,41 @@ button{cursor:pointer}
   .secondary-button{padding:0 8px}
   .file-name{font-size:7px}
 }
+
+
+/* 实时邀请函预览与工具栏 */
+.preview-head-tools{display:flex;align-items:flex-end;justify-content:flex-end;gap:14px;flex-wrap:wrap}
+.preview-controls{display:flex;align-items:center;gap:6px}
+.preview-status{display:inline-flex;align-items:center;gap:6px;margin-right:4px;color:#929ba6;font-size:8px;white-space:nowrap}
+.preview-status::before{width:6px;height:6px;border-radius:50%;background:#c5ccd4;content:""}
+.preview-status.loading::before{background:#d59b62;box-shadow:0 0 0 3px rgba(213,155,98,.14)}
+.preview-status.ready{color:#54816a}
+.preview-status.ready::before{background:#5ca47a;box-shadow:0 0 0 3px rgba(92,164,122,.12)}
+.preview-status.error{color:#a34e45}
+.preview-status.error::before{background:#bd6259}
+.preview-tool-button{min-height:27px;padding:0 9px;border:1px solid #e5e9ee;border-radius:5px;color:#647080;background:#fff;font-size:8px;white-space:nowrap;transition:background .18s,border-color .18s}
+.preview-tool-button:hover:not(:disabled){border-color:#d9bba8;color:#925b40;background:#fbf6f2}
+.preview-tool-button:disabled{opacity:.42;cursor:not-allowed}
+.invitation-preview{
+  position:relative;z-index:1;display:block;
+  width:min(330px,calc((100vh - 260px)*9/16),100%);
+  height:auto;aspect-ratio:9/16;
+  border:5px solid rgba(255,255,255,.94);border-radius:5px;
+  background:#fff;box-shadow:0 24px 60px rgba(0,0,0,.38),0 0 0 1px rgba(255,255,255,.12);
+}
+.invitation-preview[data-preset="landscape"]{
+  width:min(640px,calc((100vh - 260px)*16/9),100%);
+  aspect-ratio:16/9;
+}
+.invitation-preview[data-preset="square"]{
+  width:min(460px,calc(100vh - 260px),100%);
+  aspect-ratio:1/1;
+}
+.invitation-preview[hidden]{display:none!important}
+@media(max-width:760px){
+  .preview-head-tools{width:100%;align-items:flex-start;flex-direction:column;gap:9px}
+  .preview-controls{width:100%;flex-wrap:wrap}
+  .invitation-preview{width:min(300px,calc((100vh - 230px)*9/16),100%)}
+  .invitation-preview[data-preset="landscape"]{width:min(100%,calc((100vh - 230px)*16/9))}
+  .invitation-preview[data-preset="square"]{width:min(380px,calc(100vh - 230px),100%)}
+}
