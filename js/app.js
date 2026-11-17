@@ -145,8 +145,8 @@ async function uploadProject(files){
  })).filter(item=>item.relative&&!shouldSkipUploadPath(item.relative));
 
  let projectPrefix="";
- if(!normalized.some(item=>/^index\\.html$/i.test(item.relative))){
-  const candidates=normalized.filter(item=>/^[^/]+\\/index\\.html$/i.test(item.relative));
+ if(!normalized.some(item=>/^index\.html$/i.test(item.relative))){
+  const candidates=normalized.filter(item=>/^[^/]+\/index\.html$/i.test(item.relative));
   if(candidates.length===1){
    projectPrefix=candidates[0].relative.slice(0,candidates[0].relative.lastIndexOf("/")+1);
    normalized=normalized
@@ -154,7 +154,7 @@ async function uploadProject(files){
     .map(item=>({...item,relative:item.relative.slice(projectPrefix.length)}));
   }
  }
- if(!normalized.some(item=>/^index\\.html$/i.test(item.relative))){
+ if(!normalized.some(item=>/^index\.html$/i.test(item.relative))){
   throw new Error("没有找到项目根目录的 index.html。请直接选择包含 index.html 的 wedding-invitation 文件夹；如果选择上一级目录，系统只会在唯一子项目中自动识别。");
  }
  const oversized=normalized.find(item=>item.file.size>maxUploadFileBytes);
@@ -184,8 +184,8 @@ async function uploadProject(files){
    done+=results.length-failures.length;
    $("#folder-name").textContent=displayRootName+" · 正在导入 "+done+"/"+normalized.length;
    if(failures.length){
-    const details=failures.slice(0,5).map(result=>result.reason.message).join("\\n");
-    throw new Error("以下文件上传失败：\\n"+details+(failures.length>5?"\\n另有 "+(failures.length-5)+" 个文件失败。":""));
+    const details=failures.slice(0,5).map(result=>result.reason.message).join("\n");
+    throw new Error("以下文件上传失败：\n"+details+(failures.length>5?"\n另有 "+(failures.length-5)+" 个文件失败。":""));
    }
   }
   await completeWorkspace(id);
@@ -210,7 +210,7 @@ folderInput.addEventListener("change",async()=>{
   const result=await uploadProject(files);
   workspaceId=result.workspaceId;
   $("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";
-  showMessage("项目导入成功，已识别根目录 index.html。","success");
+  showMessage("项目导入成功，已识别根目录 index.html。"+(result.skippedCount?" 自动跳过 "+result.skippedCount+" 个 Git、输出或缓存文件。":""),"success");
  }catch(error){
   workspaceId=null;$("#folder-name").textContent="导入失败";
   showMessage(error.message,"error");
