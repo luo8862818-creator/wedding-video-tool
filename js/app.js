@@ -10,6 +10,22 @@ const presets={
 };
 let workspaceId=null,pollingTimer=null,isImporting=false;
 
+function setWorkspaceName(name){
+ const element=$("#workspace-name");
+ if(element)element.textContent=name||"尚未载入项目";
+}
+
+document.querySelectorAll(".sidebar-link").forEach(link=>{
+ link.addEventListener("click",event=>{
+  event.preventDefault();
+  const target=document.querySelector(link.getAttribute("href"));
+  if(!target)return;
+  document.querySelectorAll(".sidebar-link").forEach(item=>item.classList.remove("active"));
+  link.classList.add("active");
+  target.scrollIntoView({behavior:"smooth",block:"start"});
+ });
+});
+
 function setStatus(type,label){statusPill.className="status-pill "+type;statusPill.textContent=label;}
 function showMessage(text,type=""){message.textContent=text;message.className="message "+type;}
 function setProgress(value,label){
@@ -116,10 +132,12 @@ singleHtmlInput.addEventListener("change",async()=>{
   await completeWorkspace(id);
   workspaceId=id;
   $("#html-file-name").textContent=file.name+" · 导入完成";
+  setWorkspaceName(file.name);
   showMessage("HTML 文件导入成功。单文件模式不包含它引用的外部图片、字体、CSS 或 JS；如果网页依赖这些资源，请改用完整文件夹导入。","success");
  }catch(error){
   if(id)await deleteWorkspace(id).catch(()=>{});
   workspaceId=null;$("#html-file-name").textContent=file.name+" · 导入失败";
+  setWorkspaceName("项目导入失败");
   showMessage(error.message,"error");
  }finally{
   isImporting=false;singleHtmlInput.value="";
@@ -213,9 +231,11 @@ folderInput.addEventListener("change",async()=>{
   const result=await uploadProject(files);
   workspaceId=result.workspaceId;
   $("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";
+  setWorkspaceName(result.rootName);
   showMessage("项目导入成功，已识别根目录 index.html。"+(result.skippedCount?" 已忽略 "+result.skippedCount+" 个 Git、输出、缓存或项目外文件。":""),"success");
  }catch(error){
   workspaceId=null;$("#folder-name").textContent="导入失败";
+  setWorkspaceName("项目导入失败");
   showMessage(error.message,"error");
  }finally{
   isImporting=false;folderInput.value="";
@@ -228,6 +248,7 @@ sourcePathInput.addEventListener("input",()=>{
   workspaceId=null;
   $("#html-file-name").textContent="使用本机路径";
   $("#folder-name").textContent="使用本机路径";
+  setWorkspaceName(sourcePathInput.value.trim().split(/[\\/]/).pop());
  }
 });
 
