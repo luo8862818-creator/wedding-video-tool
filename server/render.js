@@ -1,5 +1,7 @@
 const crypto=require("node:crypto");
-const {pathToFileURL}=require("node:url");
+const path=require("node:path");
+const express=require("express");
+const http=require("node:http");
 const {chromium}=require("playwright");
 const {startVideoEncoder}=require("./ffmpeg");
 
@@ -45,7 +47,7 @@ async function renderVideo(options){
  const logicalWidth=450;
  const logicalHeight=logicalWidth*height/width;
  const deviceScaleFactor=width/logicalWidth;
- let browser=null,context=null,encoder=null;
+ let browser=null,context=null,encoder=null,sourceServer=null;
  const startedAt=Date.now();
  let timelineMsTotal=0,screenshotMs=0,encoderWaitMs=0;
  const samples={};
@@ -68,7 +70,17 @@ async function renderVideo(options){
   page.on("console",message=>{if(message.type()==="error")console.error("[邀请函控制台]",message.text());});
   await page.addInitScript(()=>{window.__OFFLINE_CAPTURE=true;});
   onProgress(3,"加载邀请函","CSS 视口 "+logicalWidth+"×"+logicalHeight+"，输出 "+width+"×"+height);
-  await page.goto(pathToFileURL(sourcePath).href,{waitUntil:"load",timeout:60000});
+  const sourceApp=express();
+  sourceApp.use(express.static(path.dirname(sourcePath),{dotfiles:"allow",fallthrough:false}));
+  sourceServer=http.createServer(sourceApp);
+  await new Promise((resolve,reject)=>{
+   sourceServer.once("error",reject);
+   sourceServer.listen(0,"127.0.0.1",resolve);
+  });
+  const sourceAddress=sourceServer.address();
+  const sourceUrl="http://127.0.0.1:"+sourceAddress.port+"/"+encodeURIComponent(path.basename(sourcePath));
+  onProgress(3,"加载邀请函","通过本地 HTTP 加载项目资源，避免 file:// 字体跨域限制");
+  await page.goto(sourceUrl,{waitUntil:"load",timeout:60000});
   const ready=await page.evaluate(async()=>{
    await window.weddingPlayer?.ready;
    if(document.fonts?.ready)await document.fonts.ready;
@@ -185,7 +197,7 @@ async function renderVideo(options){
   throw error;
  }finally{
   if(context)await context.close().catch(()=>{});
-  if(browser)await browser.close().catch(()=>{});
+  if(browser)await browser.close().catch(()=>{});\n  if(sourceServer)await new Promise(resolve=>sourceServer.close(()=>resolve())).catch(()=>{});
  }
 }
 module.exports={renderVideo};
