@@ -32,7 +32,7 @@ async function readPlaybackState(page){
    ...document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")
   ];
   const semantic=[document.body,document.querySelector("main"),document.querySelector("#app"),
-   ...document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")].filter(Boolean);
+   ...Array.from(document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")).slice(0,100)].filter(Boolean);
   const motionSet=new Set(semantic),motion=[],contentRects=[];
   for(const element of unique){
    if(motionSet.size>=180)break;
@@ -196,7 +196,8 @@ async function renderVideo(options){
     const rootIsActive=activeItems.some(item=>item.isRoot);
     const rootAndActiveAtBottom=rootIsActive&&state.rootBottom&&activeItems.every(item=>item.bottom);
     const nestedAllAtBottom=!rootIsActive&&activeAllAtBottom;
-    const atEnd=state.transformBottom||rootAndActiveAtBottom||nestedAllAtBottom;
+    const transformAtEnd=state.transformBottom&&(activeItems.length===0||activeAllAtBottom);
+    const atEnd=transformAtEnd||rootAndActiveAtBottom||nestedAllAtBottom;
 
     if(Date.now()-lastProgressAt>=700){
      lastProgressAt=Date.now();
