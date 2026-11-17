@@ -30,6 +30,21 @@ function updateEstimate(){$("#resolution-label").textContent=presets[preset.valu
 $("#choose-folder").addEventListener("click",()=>folderInput.click());
 $("#choose-music").addEventListener("click",()=>musicInput.click());
 async function requestJson(url,options={}){const response=await fetch(url,options);const data=await response.json();if(!response.ok)throw new Error(data.error||"请求失败");return data;}
+const analyzeButton=$("#analyze-duration"),analysisLabel=$("#duration-analysis");
+analyzeButton.addEventListener("click",async()=>{
+ if(!workspaceId&&!$("#source-path").value.trim()){showMessage("请先选择项目文件夹，或填写 HTML 文件完整路径。","error");return;}
+ analyzeButton.disabled=true;analyzeButton.textContent="分析中…";analysisLabel.textContent="正在启动浏览器并模拟网页播放，请保持页面打开。";showMessage("正在分析网页的自动播放时长，这一步可能需要几十秒。");
+ try{
+  const result=await requestJson("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({workspaceId,sourcePath:$("#source-path").value.trim()})});
+  duration.value=String(result.playbackSeconds);updateEstimate();
+  analysisLabel.textContent="检测完成："+result.details+"。分析耗时 "+formatElapsed(result.analysisMs)+"。";
+  showMessage("网页时长检测完成，已自动填入 "+formatSeconds(result.playbackSeconds)+"。你仍可手动修改。","success");
+ }catch(error){
+  analysisLabel.textContent="自动检测未完成，可手动填写时长。";
+  showMessage(error.message,"error");
+ }finally{analyzeButton.disabled=false;analyzeButton.textContent="重新检测";}
+});
+
 async function uploadProject(files){
  const created=await requestJson("/api/workspaces",{method:"POST"}),id=created.workspaceId;
  const rootName=files[0].webkitRelativePath.split("/")[0];let done=0;
@@ -78,7 +93,7 @@ form.addEventListener("submit",async event=>{
  const presetConfig=presets[preset.value],baseDuration=Number(duration.value),multiplier=Number(speed.value),finalDuration=baseDuration/multiplier,sourcePath=$("#source-path").value.trim();
  if(!workspaceId&&!sourcePath){showMessage("请先选择项目文件夹，或填写 HTML 文件完整路径。","error");return;}
  if(!Number.isFinite(finalDuration)||finalDuration<5||finalDuration>300){showMessage("按当前播放速度计算，最终视频时长必须在 5～300 秒之间。","error");return;}
- const payload={workspaceId,sourcePath,duration:Number(finalDuration.toFixed(3)),fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
+ const payload={workspaceId,sourcePath,duration:Number(finalDuration.toFixed(3)),playbackRate:multiplier,fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
  exportButton.disabled=true;$("#result-panel").hidden=true;$("#poster-preview").hidden=false;setStatus("running","准备导出");setProgress(0,"正在提交任务");stepText.textContent="检查参数";fileText.textContent=payload.outputName;showMessage("正在连接本地导出服务……");
  try{const result=await requestJson("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});setStatus("running","正在导出");showMessage("任务已启动。正在按设定速度逐帧渲染，请保持服务运行。");pollingTimer=setInterval(()=>pollJob(result.jobId),700);await pollJob(result.jobId);}
  catch(error){exportButton.disabled=false;setStatus("error","启动失败");showMessage(error.message,"error");}
