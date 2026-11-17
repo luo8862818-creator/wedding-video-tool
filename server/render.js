@@ -122,12 +122,14 @@ async function renderVideo(options){
    "--disable-backgrounding-occluded-windows",
    "--disable-features=CalculateNativeWinOcclusion"
   ]});
+  // Playwright 不会把小 viewport 放大填满更大的 recordVideo 画布，只会把页面画面放在左上角。
+  // 这里让录制尺寸与逻辑 viewport 一致，再由 FFmpeg 放大到目标视频尺寸。
   context=await browser.newContext({
    viewport:{width:logicalWidth,height:logicalHeight},
    deviceScaleFactor:2.4,
    colorScheme:"light",
    reducedMotion:"no-preference",
-   recordVideo:{dir:recordDir,size:{width,height}}
+   recordVideo:{dir:recordDir,size:{width:logicalWidth,height:logicalHeight}}
   });
   const page=await context.newPage();
   recording=page.video();
