@@ -25,6 +25,7 @@ function createFileLogger(filePath){
   stream.write("["+timestamp+"] ["+level+"] "+event+body+"\n");
  }
  return {
+  filePath,
   write,
   info:(event,details)=>write("INFO",event,details),
   warn:(event,details)=>write("WARN",event,details),
