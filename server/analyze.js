@@ -32,7 +32,7 @@ async function analyzePage({sourcePath,onProgress=()=>{},maxSeconds=300,tailSeco
   }
   // 统一计入网页启动延迟；所有网页定时器、CSS 动画和 rAF 均由虚拟时钟驱动。
   await page.clock.runFor(100);
-  let elapsedMs=100,lastY=null,startedMoving=false,bottomStableMs=0,maxSeenY=0,lastMovementAt=0;
+  let elapsedMs=100,lastY=null,startedMoving=false,bottomStableMs=0,noMovementMs=0;
   const tickMs=100,tailMs=Math.round(tailSeconds*1000);
   while(elapsedMs<maxSeconds*1000){
    await page.clock.runFor(tickMs);elapsedMs+=tickMs;
@@ -42,10 +42,10 @@ async function analyzePage({sourcePath,onProgress=()=>{},maxSeconds=300,tailSeco
    });
    if(lastY===null)lastY=state.y;
    const delta=Math.abs(state.y-lastY);
-   if(delta>=1){startedMoving=true;lastMovementAt=elapsedMs;bottomStableMs=0;}
-   else if(startedMoving&&state.y>=state.maxScroll-2)bottomStableMs+=tickMs;
-   if(state.y>maxSeenY)maxSeenY=state.y;
+   if(delta>=1){startedMoving=true;noMovementMs=0;bottomStableMs=0;}
+   else{noMovementMs+=tickMs;if(startedMoving&&state.y>=state.maxScroll-2)bottomStableMs+=tickMs;}
    lastY=state.y;
+   if(!startedMoving&&noMovementMs>=15000)throw new Error("等待 15 秒仍未检测到自动滚动。该网页可能需要点击启动，或使用 CSS transform/自定义时间轴。请切换手动时长。");
    if(startedMoving&&state.maxScroll>0&&state.y>=state.maxScroll-2&&bottomStableMs>=tailMs){
     const playbackSeconds=elapsedMs/1000;
     return {mode:"auto-scroll",playbackSeconds:Number(playbackSeconds.toFixed(2)),tailSeconds:Number((bottomStableMs/1000).toFixed(2)),videoSeconds:Number(playbackSeconds.toFixed(2)),details:"检测到页面自动滚动到底部，并保持稳定 "+(bottomStableMs/1000).toFixed(1)+" 秒",maxScroll:state.maxScroll,analysisMs:Date.now()-started};
