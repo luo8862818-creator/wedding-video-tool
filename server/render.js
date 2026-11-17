@@ -2,7 +2,6 @@ const fs=require("node:fs");
 const os=require("node:os");
 const path=require("node:path");
 const express=require("express");
-const http=require("node:http");
 const {chromium}=require("playwright");
 const {transcodeRecordedVideo}=require("./ffmpeg");
 
@@ -32,24 +31,25 @@ async function readPlaybackState(page){
    document.body,document.querySelector("main"),document.querySelector("#app"),
    ...document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")
   ];
-  const motionNodes=Array.from(new Set([...semanticNodes,...unique])).filter(Boolean).slice(0,160);
-  const motion=[],contentRects=[];
-  for(const element of motionNodes){
+  const semantic=[document.body,document.querySelector("main"),document.querySelector("#app"),
+   ...document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")].filter(Boolean);
+  const motionSet=new Set(semantic),motion=[],contentRects=[];
+  for(const element of unique){
+   if(motionSet.size>=180)break;
+   const style=getComputedStyle(element);
+   if(style.transform!=="none"||style.translate!=="none"||(style.animationName&&style.animationName!=="none"))motionSet.add(element);
+  }
+  for(const element of motionSet){
    const rect=element.getBoundingClientRect();
    if(!rect.width&&!rect.height)continue;
    const style=getComputedStyle(element);
    const transform=style.transform||"none",translate=style.translate||"none";
-   const animated=style.animationName&&style.animationName!=="none";
-   if(element===document.body||element===document.querySelector("main")||element===document.querySelector("#app")||
-      transform!=="none"||translate!=="none"||animated){
-    const round=value=>Math.round(value*2)/2;
-    motion.push([
-     getId(element),transform,translate,style.opacity,
-     round(rect.x),round(rect.y),round(rect.width),round(rect.height)
-    ]);
-   }
+   const round=value=>Math.round(value*2)/2;
+   const transformed=transform!=="none"||translate!=="none";
+   motion.push([getId(element),transform,translate,style.top,style.left,style.opacity,style.animationName,
+    round(rect.x),round(rect.y),round(rect.width),round(rect.height)]);
    if(rect.height>innerHeight*1.15&&rect.width>innerWidth*.45){
-    contentRects.push({top:rect.top,bottom:rect.bottom,height:rect.height});
+    contentRects.push({top:rect.top,bottom:rect.bottom,height:rect.height,transformed});
    }
   }
 
@@ -64,8 +64,9 @@ async function readPlaybackState(page){
   const rootMax=Math.max(0,root.scrollHeight-root.clientHeight);
   const rootTop=Math.max(0,Number(root.scrollTop)||0);
   const rootBottom=rootMax>20&&rootTop>=rootMax-4;
-  const transformBottom=contentRects.some(rect=>rect.top<0&&rect.bottom<=innerHeight+5);
-  const transformProgress=contentRects.reduce((best,rect)=>{
+  const transformBottom=contentRects.some(rect=>rect.transformed&&rect.top<0&&rect.bottom<=innerHeight+5);
+  const transformedRects=contentRects.filter(rect=>rect.transformed);
+  const transformProgress=transformedRects.reduce((best,rect)=>{
    const distance=Math.max(1,rect.height-innerHeight);
    const progress=Math.max(0,Math.min(1,-rect.top/distance));
    return Math.max(best,progress);
@@ -83,7 +84,7 @@ async function readPlaybackState(page){
   return {
    scrollables,rootId:getId(root),rootBottom,transformBottom,
    progress:Math.max(0,Math.min(1,Math.max(scrollProgress,transformProgress))),
-   transformProgress,hasTransformContent:contentRects.length>0,maxScroll,
+   transformProgress,hasTransformContent:transformedRects.length>0,maxScroll,rootMax,
    playerStarted,started:playerStarted||playingText||rootTop>1||scrollables.some(item=>item.top>1)||animations.some(a=>a.playState==="running"),
    ended,hintText,bodyState,motionSignature,finiteRunningAnimations,
    pageHeight:root.scrollHeight,viewportHeight:innerHeight,
@@ -192,8 +193,10 @@ async function renderVideo(options){
     const recordingSeconds=(Date.now()-recordingStartedAt)/1000;
     const activeItems=state.scrollables.filter(item=>activeScrollIds.has(item.id));
     const activeAllAtBottom=activeItems.length>0&&activeItems.every(item=>item.bottom);
-    const rootAndActiveAtBottom=state.rootBottom&&activeItems.every(item=>item.bottom);
-    const atEnd=state.transformBottom||activeAllAtBottom||rootAndActiveAtBottom;
+    const rootIsActive=activeItems.some(item=>item.isRoot);
+    const rootAndActiveAtBottom=rootIsActive&&state.rootBottom&&activeItems.every(item=>item.bottom);
+    const nestedAllAtBottom=!rootIsActive&&activeAllAtBottom;
+    const atEnd=state.transformBottom||rootAndActiveAtBottom||nestedAllAtBottom;
 
     if(Date.now()-lastProgressAt>=700){
      lastProgressAt=Date.now();
@@ -221,7 +224,7 @@ async function renderVideo(options){
 
      // 无滚动条的纯 CSS/JS 分屏动画：在画面长时间完全静止后自动结束。
      // 有真实滚动容器但尚未到底时不使用此兜底，避免中途停顿被误判为结束。
-     if(state.maxScroll<20&&!state.hasTransformContent&&Date.now()-lastActivityAt>=idleEndMs&&state.finiteRunningAnimations===0){
+     if(activeScrollIds.size===0&&!state.hasTransformContent&&Date.now()-lastActivityAt>=idleEndMs&&state.finiteRunningAnimations===0){
       endReason="页面动画停止变化";
       break;
      }
