@@ -82,7 +82,7 @@ async function loadHistory(){
     ?("采集 "+item.metrics.captureWidth+" × "+item.metrics.captureHeight+(item.metrics.nativeResolution?" · 原生采集":" · 缩放采集"))
     :"";
    const details=[dimensions,capture,(item.fps||"-")+" FPS",formatSeconds(item.duration),item.frameCount?item.frameCount+" 帧":"帧数未知"].filter(Boolean).join(" · ");
-   return '<article class="history-item"><div class="history-top"><strong>'+escapeHtml(item.outputName||"未命名视频")+'</strong><span class="history-status '+(item.status==="completed"?"done":"failed")+'">'+status+'</span></div><div class="history-meta">'+escapeHtml(date)+' · 导出耗时 <b>'+formatElapsed(item.elapsedMs)+'</b></div><div class="history-meta">'+escapeHtml(details)+' · 输出帧率 '+escapeHtml(item.avgFps||"-")+'</div>'+(item.error?'<div class="history-error">'+escapeHtml(item.error)+'</div>':"")+'</article>';
+   return '<article class="history-item"><div class="history-top"><strong>'+escapeHtml(item.outputName||"未命名视频")+'</strong><span class="history-status '+(item.status==="completed"?"done":"failed")+'">'+status+'</span></div><div class="history-meta">'+escapeHtml(date)+' · 导出耗时 <b>'+formatElapsed(item.elapsedMs)+'</b></div><div class="history-meta">'+escapeHtml(details)+' · 输出帧率 '+escapeHtml(item.avgFps||"-")+'</div>'+(item.error?'<div class="history-error">'+escapeHtml(item.error)+'</div>':"")+(item.logUrl?'<a class="history-log-link" href="'+escapeHtml(item.logUrl)+'" download>下载诊断日志</a>':"")+'</article>';
   }).join("");
  }catch(error){
   list.innerHTML='<span class="history-empty">读取历史记录失败：'+escapeHtml(error.message)+'</span>';
@@ -270,6 +270,12 @@ async function pollJob(jobId){
   const result=await response.json();
   if(!response.ok)throw new Error(result.error||"无法获取任务状态");
   setProgress(result.progress,result.message);
+  if(result.logUrl){
+   const logLink=$("#log-download-link");
+   logLink.href=result.logUrl;
+   logLink.download="wedding-video-"+jobId+".log";
+   logLink.hidden=false;
+  }
   stepText.textContent=result.stepLabel||"处理中";
   fileText.textContent=result.outputName||"生成中";
   $("#elapsed-text").textContent=formatElapsed(result.elapsedMs);
@@ -287,7 +293,7 @@ async function pollJob(jobId){
   }
   if(result.status==="failed"){
    clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
-   setStatus("error","导出失败");showMessage(result.error||"导出失败，请查看服务端终端日志。","error");
+   setStatus("error","导出失败");showMessage(result.error||"导出失败。请下载本次诊断日志排查原因。","error");
    loadHistory();
   }
  }catch(error){
