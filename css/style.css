@@ -459,26 +459,22 @@ button{cursor:pointer}
 .preview-tool-button{min-height:27px;padding:0 9px;border:1px solid #e5e9ee;border-radius:5px;color:#647080;background:#fff;font-size:8px;white-space:nowrap;transition:background .18s,border-color .18s}
 .preview-tool-button:hover:not(:disabled){border-color:#d9bba8;color:#925b40;background:#fbf6f2}
 .preview-tool-button:disabled{opacity:.42;cursor:not-allowed}
-.invitation-preview{
-  position:relative;z-index:1;display:block;
-  width:min(330px,calc((100vh - 260px)*9/16),100%);
-  height:auto;aspect-ratio:9/16;
+
+/* iframe 内部视口使用真实导出分辨率，外层仅负责等比例缩放展示 */
+.preview-viewport{
+  position:relative;z-index:1;flex:none;overflow:hidden;
+  width:320px;height:569px;
   border:5px solid rgba(255,255,255,.94);border-radius:5px;
   background:#fff;box-shadow:0 24px 60px rgba(0,0,0,.38),0 0 0 1px rgba(255,255,255,.12);
 }
-.invitation-preview[data-preset="landscape"]{
-  width:min(640px,calc((100vh - 260px)*16/9),100%);
-  aspect-ratio:16/9;
+.preview-viewport[hidden]{display:none!important}
+.invitation-preview{
+  position:absolute;top:0;left:0;display:block;
+  width:1080px;height:1920px;max-width:none;
+  border:0;border-radius:0;background:#fff;
+  transform-origin:top left;
 }
-.invitation-preview[data-preset="square"]{
-  width:min(460px,calc(100vh - 260px),100%);
-  aspect-ratio:1/1;
-}
-.invitation-preview[hidden]{display:none!important}
 @media(max-width:760px){
   .preview-head-tools{width:100%;align-items:flex-start;flex-direction:column;gap:9px}
   .preview-controls{width:100%;flex-wrap:wrap}
-  .invitation-preview{width:min(300px,calc((100vh - 230px)*9/16),100%)}
-  .invitation-preview[data-preset="landscape"]{width:min(100%,calc((100vh - 230px)*16/9))}
-  .invitation-preview[data-preset="square"]{width:min(380px,calc(100vh - 230px),100%)}
 }
