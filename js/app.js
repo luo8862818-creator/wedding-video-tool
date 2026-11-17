@@ -5,7 +5,7 @@ const stepText=$("#step-text"),fileText=$("#file-text"),message=$("#message");
 const folderInput=$("#project-folder"),singleHtmlInput=$("#single-html-file"),musicInput=$("#music-file"),sourcePathInput=$("#source-path");
 const invitationPreview=$("#invitation-preview"),posterPreview=$("#poster-preview"),resultPanel=$("#result-panel");
 const previewStatus=$("#preview-status"),reloadPreviewButton=$("#reload-preview"),openPreviewButton=$("#open-preview");
-let previewUrl=null;
+let previewUrl=null,previewBaseUrl=null;
 const presets={
  portrait:{width:1080,height:1920,label:"1080 × 1920"},
  landscape:{width:1920,height:1080,label:"1920 × 1080"},
@@ -29,7 +29,7 @@ function updatePreviewPreset(){
 }
 
 function hideLivePreview(){
- previewUrl=null;
+ previewUrl=null;previewBaseUrl=null;
  if(invitationPreview){
   invitationPreview.dataset.previewUrl="";
   invitationPreview.hidden=true;
@@ -50,9 +50,14 @@ function showLivePreview(){
  return true;
 }
 
-function loadWorkspacePreview(id){
+function loadWorkspacePreview(id,baseUrl){
  if(!id||!invitationPreview)return;
- const url="/workspace-preview/"+encodeURIComponent(id)+"/?preview="+Date.now();
+ if(!baseUrl){
+  setPreviewStatus("预览服务未启动","error");
+  return;
+ }
+ previewBaseUrl=baseUrl.endsWith("/")?baseUrl:baseUrl+"/";
+ const url=previewBaseUrl+"?preview="+Date.now();
  previewUrl=url;
  invitationPreview.dataset.previewUrl=url;
  invitationPreview.onload=()=>{
@@ -60,13 +65,13 @@ function loadWorkspacePreview(id){
   try{
    const doc=invitationPreview.contentDocument;
    const bodyText=(doc?.body?.innerText||"").trim();
-   if(/预览项目不存在|尚未导入完成|Cannot GET|Not Found/i.test(bodyText)){
-    setPreviewStatus("页面加载失败","error");
-    return;
+   if(doc&&/Preview resource not found|Not Found/i.test(bodyText)){
+    setPreviewStatus("页面资源未找到","error");
+   }else{
+    setPreviewStatus("实时预览已载入","ready");
    }
-   const brokenImages=doc?Array.from(doc.images).filter(image=>image.complete&&!image.naturalWidth).length:0;
-   setPreviewStatus(brokenImages?("已载入 · "+brokenImages+" 张图片异常"):"实时预览已载入",brokenImages?"error":"ready");
   }catch(_){
+   // 预览运行在独立本地端口，浏览器会按同源策略隔离 iframe；load 事件可确认主文档已打开。
    setPreviewStatus("网页已打开","ready");
   }
   reloadPreviewButton.disabled=false;
@@ -86,15 +91,15 @@ function loadWorkspacePreview(id){
 }
 
 function refreshWorkspacePreview(){
- if(!workspaceId)return;
- loadWorkspacePreview(workspaceId);
+ if(!workspaceId||!previewBaseUrl)return;
+ loadWorkspacePreview(workspaceId,previewBaseUrl);
 }
 
 reloadPreviewButton?.addEventListener("click",()=>{
  if(showLivePreview())refreshWorkspacePreview();
 });
 openPreviewButton?.addEventListener("click",()=>{
- if(previewUrl)window.open(previewUrl,"_blank","noopener,noreferrer");
+ if(previewBaseUrl)window.open(previewBaseUrl,"_blank","noopener,noreferrer");
 });
 
 document.querySelectorAll(".sidebar-link").forEach(link=>{
@@ -214,11 +219,11 @@ singleHtmlInput.addEventListener("change",async()=>{
  try{
   id=await createWorkspace();
   await uploadBinary("/api/workspaces/"+encodeURIComponent(id)+"/file?path=index.html",file);
-  await completeWorkspace(id);
+  const completed=await completeWorkspace(id);
   workspaceId=id;
   $("#html-file-name").textContent=file.name+" · 导入完成";
   setWorkspaceName(file.name);
-  loadWorkspacePreview(workspaceId);
+  loadWorkspacePreview(workspaceId,completed.previewUrl);
   showMessage("HTML 文件导入成功，中央区域正在加载实时预览。单文件模式不包含它引用的外部图片、字体、CSS 或 JS；如果网页依赖这些资源，请改用完整文件夹导入。","success");
  }catch(error){
   if(id)await deleteWorkspace(id).catch(()=>{});
@@ -296,8 +301,8 @@ async function uploadProject(files){
     throw new Error("以下文件上传失败：\n"+details+(failures.length>5?"\n另有 "+(failures.length-5)+" 个文件失败。":""));
    }
   }
-  await completeWorkspace(id);
-  return {workspaceId:id,fileCount:done,rootName:displayRootName,skippedCount:files.length-normalized.length};
+  const completed=await completeWorkspace(id);
+  return {workspaceId:id,fileCount:done,rootName:displayRootName,skippedCount:files.length-normalized.length,previewUrl:completed.previewUrl};
  }catch(error){
   await deleteWorkspace(id).catch(()=>{});
   throw error;
@@ -320,7 +325,7 @@ folderInput.addEventListener("change",async()=>{
   workspaceId=result.workspaceId;
   $("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";
   setWorkspaceName(result.rootName);
-  loadWorkspacePreview(workspaceId);
+  loadWorkspacePreview(workspaceId,result.previewUrl);
   showMessage("项目导入成功，中央区域正在加载真实网页预览。"+(result.skippedCount?" 已忽略 "+result.skippedCount+" 个 Git、输出、缓存或项目外文件。":""),"success");
  }catch(error){
   workspaceId=null;$("#folder-name").textContent="导入失败";
