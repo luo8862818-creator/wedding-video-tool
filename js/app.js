@@ -210,7 +210,7 @@ folderInput.addEventListener("change",async()=>{
   const result=await uploadProject(files);
   workspaceId=result.workspaceId;
   $("#folder-name").textContent=result.rootName+" · 导入完成（"+result.fileCount+" 个文件）";
-  showMessage("项目导入成功，已识别根目录 index.html。"+(result.skippedCount?" 自动跳过 "+result.skippedCount+" 个 Git、输出或缓存文件。":""),"success");
+  showMessage("项目导入成功，已识别根目录 index.html。"+(result.skippedCount?" 已忽略 "+result.skippedCount+" 个 Git、输出、缓存或项目外文件。":""),"success");
  }catch(error){
   workspaceId=null;$("#folder-name").textContent="导入失败";
   showMessage(error.message,"error");
