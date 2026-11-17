@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网页视频导出测试 · 12 屏模板</title>
+<style>
+:root{--paper:#fffaf1;--ink:#493b32;--gold:#b58a54;--rose:#c77f79;--muted:#8d7b6d}
+*{box-sizing:border-box}
+html{scroll-behavior:auto;background:#e8e0d4}
+body{margin:0;color:var(--ink);font-family:"Microsoft YaHei","PingFang SC",sans-serif;background:#e8e0d4}
+#progress{position:fixed;z-index:20;top:0;left:0;height:4px;width:0;background:var(--rose)}
+#counter{position:fixed;z-index:20;right:12px;top:12px;padding:7px 11px;border:1px solid #d9c6a9;border-radius:20px;background:#fffaf0dd;font-size:12px;color:#735c48}
+#hint{position:fixed;z-index:20;left:50%;bottom:12px;transform:translateX(-50%);padding:7px 12px;border-radius:20px;background:#fffaf0dd;color:#735c48;font-size:11px;white-space:nowrap}
+main{width:min(100%,450px);margin:0 auto;background:var(--paper);box-shadow:0 0 30px #58452b18}
+.page{position:relative;min-height:100svh;padding:12vw 8vw;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;border-bottom:1px solid #e6d6bd;background:
+ radial-gradient(circle at 12% 15%,#f2dfd3 0 2px,transparent 3px),
+ radial-gradient(circle at 88% 80%,#ead9bc 0 2px,transparent 3px),
+ linear-gradient(145deg,#fffaf1,#f8eee0)}
+.page:nth-child(even){background:linear-gradient(155deg,#fbf2e7,#f2e4d8)}
+.eyebrow{font-size:11px;letter-spacing:4px;color:var(--gold);text-transform:uppercase;margin-bottom:18px}
+h1,h2{font-family:Georgia,"Songti SC",serif;font-weight:400;letter-spacing:2px}
+h1{font-size:42px;line-height:1.25;margin:0 0 18px;color:#916d4b}
+h2{font-size:31px;line-height:1.3;margin:0 0 18px;color:#916d4b}
+p{font-size:14px;line-height:2;margin:8px 0;color:var(--muted)}
+.big-date{font-family:Georgia,serif;font-size:25px;letter-spacing:3px;color:#9e705e;margin-top:22px}
+.rule{width:70px;height:1px;background:#c7a779;margin:18px auto}
+.art{width:180px;height:180px;border-radius:50%;margin:24px auto;background:
+ radial-gradient(circle at 38% 35%,#fff9 0 9%,transparent 10%),
+ radial-gradient(circle at 65% 65%,#c98b83 0 13%,transparent 14%),
+ radial-gradient(circle at 40% 62%,#d9b17c 0 22%,transparent 23%),
+ linear-gradient(135deg,#f1d9c9,#e9c5b7 48%,#e9dcbf);
+ box-shadow:0 12px 35px #87684a20;position:relative}
+.art:after{content:"♡";position:absolute;inset:0;display:grid;place-items:center;font-size:65px;color:#fff8}
+.tag{display:inline-block;border:1px solid #d7bd97;border-radius:30px;padding:8px 18px;margin:8px;color:#98724c;font-size:12px}
+.photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;margin-top:22px}
+.photo{height:145px;border-radius:8px;background:linear-gradient(145deg,#e7cfc0,#f4e6d7 55%,#c7a88d);display:grid;place-items:center;color:#fff;font-family:Georgia,serif;font-size:26px;box-shadow:0 6px 18px #6e52321c}
+.photo:nth-child(2){background:linear-gradient(145deg,#d9c4a6,#f3e5d2,#b8a28a)}
+.photo:nth-child(3){background:linear-gradient(145deg,#d9b9b3,#f5e5dd,#b99c91)}
+.photo:nth-child(4){background:linear-gradient(145deg,#d9d5bc,#f5ebd5,#b6a78d)}
+.timeline{width:100%;text-align:left;margin-top:18px}
+.timeline div{padding:13px 15px;margin:9px 0;border-left:2px solid #c7a779;background:#fff9f0;border-radius:0 8px 8px 0}
+.timeline b{display:block;color:#8f6d4e;font-size:14px;margin-bottom:4px}
+.timeline span{font-size:12px;color:#968576}
+.seal{width:90px;height:90px;border:1px solid #c9a77a;border-radius:50%;display:grid;place-items:center;color:#b17d6c;font-family:Georgia,serif;font-size:32px;margin:22px auto}
+footer{font-size:11px;color:#b09b82;margin-top:30px;letter-spacing:2px}
+.float{position:absolute;width:13px;height:13px;border-radius:50%;background:#d9a79a66;animation:float 4s ease-in-out infinite}
+.float.a{top:16%;left:13%}.float.b{right:12%;bottom:19%;animation-delay:1.5s}
+@keyframes float{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-18px) scale(1.15)}}
+@media(min-width:600px){main{width:450px}}
+</style>
+</head>
+<body>
+<div id="progress"></div><div id="counter">01 / 12</div><div id="hint">页面将在 2 秒后自动向下播放</div>
+<main id="invitation">
+<section class="page"><i class="float a"></i><i class="float b"></i><div class="eyebrow">Save the Date</div><h1>我们的婚礼</h1><div class="art"></div><p>把欢喜写成邀请<br>把余生交给彼此</p><div class="big-date">2027 · 01 · 02</div><footer>WELCOME TO OUR WEDDING</footer></section>
+<section class="page"><i class="float a"></i><div class="eyebrow">Wedding Invitation</div><h2>诚挚邀请</h2><div class="rule"></div><p>亲爱的家人、朋友：</p><p>我们即将携手走进人生新的篇章。<br>诚邀您来到现场，与我们分享这份喜悦。</p><div class="seal">囍</div><span class="tag">良辰已定</span><span class="tag">敬候光临</span></section>
+<section class="page"><div class="eyebrow">Our Story</div><h2>相遇 · 相识</h2><div class="art"></div><p>人海中的一次相遇，<br>让平凡的日子有了特别的意义。</p><p>从第一次问候，到熟悉彼此，<br>每一步都值得珍藏。</p></section>
+<section class="page"><div class="eyebrow">Our Story</div><h2>相知 · 相伴</h2><div class="rule"></div><p>分享日常，倾听彼此，<br>慢慢成为最懂对方的人。</p><p>往后的每一个春夏秋冬，<br>都想与你一起经历。</p><div class="big-date">Together Forever</div></section>
+<section class="page"><div class="eyebrow">Our Moments</div><h2>珍藏每个瞬间</h2><p>平凡生活里的小小心动</p><div class="photo-grid"><div class="photo">01</div><div class="photo">02</div><div class="photo">03</div><div class="photo">04</div></div></section>
+<section class="page"><div class="eyebrow">Love Is</div><h2>关于爱的细节</h2><div class="art"></div><p>爱是日常里的温柔回应，<br>是每一次坚定的牵手，<br>也是往后岁月里的相互陪伴。</p><span class="tag">理解</span><span class="tag">信任</span><span class="tag">陪伴</span></section>
+<section class="page"><div class="eyebrow">The Wedding Date</div><h2>婚礼日期</h2><div class="rule"></div><div class="big-date">2027 · 01 · 02</div><div class="seal">02</div><p>星期六 · 农历冬月廿五</p><p>愿这一天，有最亲爱的你们在身旁。</p></section>
+<section class="page"><div class="eyebrow">Wedding Day</div><h2>婚礼流程</h2><div class="timeline"><div><b>10:30 · 嘉宾签到</b><span>欢迎到场，留下祝福</span></div><div><b>11:00 · 婚礼仪式</b><span>见证我们的郑重约定</span></div><div><b>12:00 · 喜宴开始</b><span>与亲友共享一席欢喜</span></div><div><b>13:00 · 合影留念</b><span>记录今天的笑容</span></div></div></section>
+<section class="page"><div class="eyebrow">Wedding Venue</div><h2>婚礼地点</h2><div class="art"></div><p>XX省 · XX市 · XX县</p><p>XX镇 XX村 XX宴会厅</p><span class="tag">期待与您相见</span></section>
+<section class="page"><div class="eyebrow">Our Gallery</div><h2>岁月温柔</h2><p>因为一路有你</p><div class="photo-grid"><div class="photo">A</div><div class="photo">B</div><div class="photo">C</div><div class="photo">D</div></div></section>
+<section class="page"><i class="float a"></i><i class="float b"></i><div class="eyebrow">Thank You</div><h2>感谢有你</h2><div class="seal">♡</div><p>感谢一路以来的关心与祝福。<br>期待在婚礼当天与你相见。</p><div class="big-date">See You Soon</div></section>
+<section class="page"><div class="eyebrow">You Are Invited</div><h1>敬请光临</h1><div class="art"></div><p>诚挚邀请您<br>共同见证我们的幸福时刻</p><div class="big-date">2027 · 01 · 02</div><footer>WITH LOVE · FOREVER</footer></section>
+</main>
+<script>
+(() => {
+  const pages=[...document.querySelectorAll(".page")];
+  const counter=document.getElementById("counter");
+  const progress=document.getElementById("progress");
+  const hint=document.getElementById("hint");
+  const total=pages.length;
+  let started=false,raf=0,startAt=0;
+  const duration=36000; // 36秒走完整个12屏，便于快速测试导出
+  function update(){
+    const max=document.documentElement.scrollHeight-innerHeight;
+    const ratio=max>0?scrollY/max:0;
+    const index=Math.min(total,Math.floor(ratio*total)+1);
+    counter.textContent=String(index).padStart(2,"0")+" / "+total;
+    progress.style.width=(ratio*100)+"%";
+  }
+  function animate(now){
+    if(!started)return;
+    const elapsed=now-startAt;
+    const ratio=Math.min(1,elapsed/duration);
+    const max=document.documentElement.scrollHeight-innerHeight;
+    window.scrollTo(0,max*ratio);
+    update();
+    if(ratio<1)raf=requestAnimationFrame(animate);
+    else hint.textContent="播放完成";
+  }
+  function start(){
+    if(started)return;
+    started=true;hint.textContent="正在自动播放 · 12 屏";
+    startAt=performance.now();raf=requestAnimationFrame(animate);
+  }
+  window.addEventListener("scroll",update,{passive:true});
+  window.addEventListener("load",()=>{update();setTimeout(start,2000);});
+  // 测试工具可通过该标志确认自动播放状态；不依赖任何外部库。
+  window.templatePlayer={get started(){return started},get duration(){return duration},get totalPages(){return total}};
+})();
+</script>
+</body>
+</html>
