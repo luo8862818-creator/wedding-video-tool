@@ -17,48 +17,68 @@
     <section class="intro">
       <p class="eyebrow">HTML · PLAYWRIGHT · FFMPEG</p>
       <h1>把网页邀请函，<em>变成婚礼视频。</em></h1>
-      <p class="intro-copy">选择邀请函项目文件夹，设置画面、时长与播放速度。导出后可直接预览、播放和保存 MP4。</p>
+      <p class="intro-copy">选择单个 HTML 文件或完整项目文件夹。工具会真实运行网页、自动识别播放结束，并按网页原本的速度录制 MP4。</p>
     </section>
     <section class="workspace">
       <form id="export-form" class="settings-card">
-        <div class="section-heading"><div><span class="step">01</span><h2>选择邀请函项目</h2></div><span class="required-note">优先选择整个文件夹</span></div>
+        <div class="section-heading"><div><span class="step">01</span><h2>选择邀请函项目</h2></div><span class="required-note">支持单文件或完整文件夹</span></div>
         <label class="field">
-          <span>邀请函项目文件夹 <b>*</b></span>
-          <div class="picker-row"><input id="project-folder" type="file" webkitdirectory directory multiple hidden><button id="choose-folder" class="secondary-button" type="button">选择文件夹</button><span id="folder-name" class="file-name">尚未选择项目文件夹</span></div>
-          <small>请选择包含 index.html、css、js、assets 等目录的完整文件夹，系统会保留相对路径，避免图片和字体丢失。</small>
+          <span>单个 HTML 文件</span>
+          <div class="picker-row">
+            <input id="single-html-file" type="file" accept=".html,.htm,text/html" hidden>
+            <button id="choose-html" class="secondary-button" type="button">选择 HTML 文件</button>
+            <span id="html-file-name" class="file-name">尚未选择 HTML 文件</span>
+          </div>
+          <small>适用于 CSS、JavaScript 已写在 HTML 内部，且不依赖外部图片、字体或脚本的网页。</small>
         </label>
         <label class="field">
-          <span>或直接填写 HTML 文件完整路径 <small>（可选备用方式）</small></span>
-          <input id="source-path" name="sourcePath" type="text" placeholder="例如：C:\\Users\\用户名\\Desktop\\wedding\\index.html">
-          <small>使用路径方式时，请确保图片、字体等素材仍在原目录结构中。</small>
+          <span>完整邀请函项目文件夹 <small>（包含图片、字体、CSS、JS 时使用）</small></span>
+          <div class="picker-row">
+            <input id="project-folder" type="file" webkitdirectory directory multiple hidden>
+            <button id="choose-folder" class="secondary-button" type="button">选择文件夹</button>
+            <span id="folder-name" class="file-name">尚未选择项目文件夹</span>
+          </div>
+          <small>请选择根目录包含 index.html 的文件夹，系统会保留资源相对路径。</small>
+        </label>
+        <label class="field">
+          <span>或填写本机 HTML 文件完整路径 <small>（备用方式）</small></span>
+          <input id="source-path" name="sourcePath" type="text" placeholder="例如：C:\Users\用户名\Desktop\wedding\index.html">
+          <small>使用本机路径时，图片、字体等资源必须仍在原目录结构中。</small>
         </label>
         <label class="field">
           <span>背景音乐 <small>（可选）</small></span>
-          <div class="picker-row"><input id="music-file" type="file" accept="audio/*" hidden><button id="choose-music" class="secondary-button" type="button">选择音乐文件</button><span id="music-name" class="file-name">未选择音乐</span></div>
-          <small>支持 MP3、WAV、AAC、M4A 等常见格式。音乐从头播放，视频结束时同步结束。</small>
+          <div class="picker-row">
+            <input id="music-file" type="file" accept="audio/*" hidden>
+            <button id="choose-music" class="secondary-button" type="button">选择音乐文件</button>
+            <span id="music-name" class="file-name">未选择音乐</span>
+          </div>
+          <small>音乐从视频开始处播放，自动循环或裁剪，与网页实际播放时长同步结束。</small>
         </label>
         <div class="section-heading second-heading"><div><span class="step">02</span><h2>视频参数</h2></div></div>
         <div class="field-grid">
           <label class="field"><span>画面比例</span><select id="preset"><option value="portrait">9:16 · 抖音竖屏</option><option value="landscape">16:9 · 横屏</option><option value="square">1:1 · 方形</option></select></label>
           <label class="field"><span>帧率</span><select id="fps"><option value="30" selected>30 FPS · 推荐</option><option value="25">25 FPS</option><option value="60">60 FPS</option></select></label>
-          <label class="field"><span>网页播放时长（秒）</span><div class="duration-input-row"><input id="duration" type="number" min="5" max="300" step="any" value="118" required><button id="analyze-duration" class="secondary-button" type="button">自动检测</button></div><small id="duration-analysis">可自动模拟网页播放并计算时长；也可以手动填写。</small></label>
-          <label class="field"><span>播放速度</span><select id="speed"><option value="0.5">0.5× · 慢速</option><option value="0.75">0.75× · 较慢</option><option value="1" selected>1× · 正常</option><option value="1.25">1.25× · 较快</option><option value="1.5">1.5× · 快速</option><option value="2">2× · 倍速</option></select></label>
           <label class="field field-full"><span>输出文件名</span><input id="output-name" type="text" value="wedding-invitation.mp4" required></label>
         </div>
-        <div class="output-hint"><span class="hint-icon">↳</span><span>输出尺寸：<strong id="resolution-label">1080 × 1920</strong>。实际视频时长：<strong id="actual-duration">1分58秒</strong>（基准时长 ÷ 播放速度）。文件保存到项目的 <code>output</code> 目录。</span></div>
-        <div class="actions"><button id="export-button" class="primary-button" type="submit"><span class="button-icon">▶</span> 开始导出 MP4</button><p>导出期间请保持本地服务运行。逐帧渲染时间取决于页面复杂度和电脑性能。</p></div>
+        <div class="output-hint"><span class="hint-icon">↳</span><span><strong>无需输入视频时长，也无需提前检测。</strong>网页打开后由工具真实录制；页面滚动快慢、停顿和结束时间均跟随网页本身。输出尺寸：<strong id="resolution-label">1080 × 1920</strong>。文件保存到本工具的 <code>output</code> 目录。</span></div>
+        <div class="actions"><button id="export-button" class="primary-button" type="submit"><span class="button-icon">▶</span> 开始真实播放并导出 MP4</button><p>导出期间请保持本地服务运行。网页播放结束后自动封装 MP4。</p></div>
       </form>
       <aside class="status-card">
         <div class="status-header"><h2>导出任务</h2><span id="status-pill" class="status-pill idle">等待任务</span></div>
         <div class="preview-frame" id="poster-preview"><div class="preview-inner"><span class="preview-spark">✦</span><strong>YOUR<br>WEDDING<br>FILM</strong><small>MADE WITH LOVE</small></div><span class="preview-size">9:16</span></div>
         <div class="progress-block"><div class="progress-label"><span id="progress-text">尚未开始</span><strong id="progress-value">0%</strong></div><div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div></div>
-        <div class="task-details"><div><span>当前步骤</span><strong id="step-text">等待导出</strong></div><div><span>输出文件</span><strong id="file-text">尚未生成</strong></div><div><span>本次耗时</span><strong id="elapsed-text">00:00</strong></div></div>
+        <div class="task-details">
+          <div><span>当前步骤</span><strong id="step-text">等待导出</strong></div>
+          <div><span>输出文件</span><strong id="file-text">尚未生成</strong></div>
+          <div><span>实际视频时长</span><strong id="video-duration">等待录制</strong></div>
+          <div><span>本次耗时</span><strong id="elapsed-text">00:00</strong></div>
+        </div>
         <section class="history-panel">
           <div class="history-heading"><h3>最近导出记录</h3><button id="refresh-history" class="text-button" type="button">刷新</button></div>
-          <p class="history-hint">自动保存最近 100 次任务，包含成功和失败记录。</p>
+          <p class="history-hint">自动保存最近 100 次任务，包含实际视频时长、导出耗时和成品帧率。</p>
           <div id="history-list" class="history-list"><span class="history-empty">正在读取历史记录……</span></div>
         </section>
-        <div id="message" class="message" role="status" aria-live="polite">选择项目文件夹后即可开始导出。</div>
+        <div id="message" class="message" role="status" aria-live="polite">选择单个 HTML 文件或完整项目文件夹后即可开始。</div>
         <section id="result-panel" class="result-panel" hidden>
           <h3>视频预览</h3>
           <video id="result-video" controls playsinline preload="metadata"></video>
