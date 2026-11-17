@@ -1,4 +1,5 @@
 const fs=require("node:fs");
+const path=require("node:path");
 const {spawn}=require("node:child_process");
 const ffmpegPath=require("ffmpeg-static");
 
@@ -33,11 +34,14 @@ function runFfmpeg(args,{onProgress=()=>{}}={}){
  });
 }
 
-async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,trimStartSeconds=0,durationHint,onProgress=()=>{}}){
+async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{}}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!fs.existsSync(inputPath)||fs.statSync(inputPath).size===0)throw new Error("浏览器录制文件不存在或为空，无法生成 MP4。");
- const trimFilter=trimStartSeconds>0.02?"trim=start="+trimStartSeconds.toFixed(3)+",setpts=PTS-STARTPTS,":"";
- const filter=trimFilter+"fps="+fps+",scale="+width+":"+height+":force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
+
+ const outputDir=path.dirname(outputPath);
+ fs.mkdirSync(outputDir,{recursive:true});
+ const partialPath=path.join(outputDir,path.basename(outputPath,".mp4")+".partial-"+process.pid+"-"+Date.now()+".mp4");
+ const filter="fps="+fps+",scale="+width+":"+height+":force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
  const args=["-y","-hide_banner","-loglevel","error","-i",inputPath];
  if(musicPath)args.push("-stream_loop","-1","-i",musicPath);
  args.push("-map","0:v:0");
@@ -45,25 +49,40 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
  args.push("-vf",filter,"-c:v","libx264","-preset","veryfast","-crf","20","-pix_fmt","yuv420p","-fps_mode","cfr");
  if(musicPath)args.push("-c:a","aac","-b:a","192k","-shortest");
  else args.push("-an");
- args.push("-movflags","+faststart","-progress","pipe:2",outputPath);
+ args.push("-movflags","+faststart","-progress","pipe:2",partialPath);
 
- onProgress(0,"开始转码");
- const converted=await runFfmpeg(args,{onProgress:state=>{
-  const ratio=durationHint>0?Math.min(1,state.outTimeSeconds/durationHint):0;
-  onProgress(ratio,"正在转码 MP4 · "+state.frame+" 帧");
- }});
- if(!fs.existsSync(outputPath)||fs.statSync(outputPath).size<1024)throw new Error("FFmpeg 未生成有效 MP4 文件。");
+ try{
+  onProgress(0,"开始转码");
+  const converted=await runFfmpeg(args,{onProgress:state=>{
+   const ratio=durationHint>0?Math.min(1,state.outTimeSeconds/durationHint):0;
+   onProgress(ratio,"正在转码 MP4 · "+state.frame+" 帧");
+  }});
+  if(!fs.existsSync(partialPath)||fs.statSync(partialPath).size<1024)throw new Error("FFmpeg 未生成有效 MP4 文件。");
 
- // 对成品完整解码，读取 FFmpeg 实际输出帧数。
- // 不再使用 ceil(duration * fps) 做严格比较，避免小数时长在最后一帧产生 ±1 帧误报。
- const checked=await runFfmpeg([
-  "-hide_banner","-loglevel","error","-i",outputPath,
-  "-map","0:v:0","-progress","pipe:2","-f","null","-"
- ]);
- if(!checked.frame)throw new Error("MP4 校验失败：没有检测到有效视频帧。");
- const size=fs.statSync(outputPath).size;
- const durationSeconds=Number((checked.frame/fps).toFixed(3));
- return {frames:checked.frame,durationSeconds,size,encodedFrames:converted.frame};
+  // 完整解码成品，直接读取实际帧数与媒体时间戳。
+  // 不再用 ceil(预估时长 × FPS) 预测帧数，彻底避免 1224/1223 这种边界误报。
+  const checked=await runFfmpeg([
+   "-hide_banner","-loglevel","error","-i",partialPath,
+   "-map","0:v:0","-progress","pipe:2","-f","null","-"
+  ]);
+  if(!checked.frame)throw new Error("MP4 校验失败：没有检测到有效视频帧。");
+  const size=fs.statSync(partialPath).size;
+  const durationSeconds=Number((checked.outTimeSeconds>0?checked.outTimeSeconds:checked.frame/fps).toFixed(3));
+
+  // 只有完整转码并解码校验成功后，才替换正式输出文件。
+  fs.rmSync(outputPath,{force:true});
+  fs.renameSync(partialPath,outputPath);
+  return {
+   frames:checked.frame,
+   durationSeconds,
+   size,
+   encodedFrames:converted.frame,
+   avgFps:Number((checked.frame/(durationSeconds||1)).toFixed(2))
+  };
+ }catch(error){
+  fs.rmSync(partialPath,{force:true});
+  throw error;
+ }
 }
 
 module.exports={transcodeRecordedVideo};
