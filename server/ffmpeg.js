@@ -40,7 +40,7 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
 
  const outputDir=path.dirname(outputPath);
  fs.mkdirSync(outputDir,{recursive:true});
- const partialPath=path.join(outputDir,path.basename(outputPath,".mp4")+".partial-"+process.pid+"-"+Date.now()+".mp4");
+ const partialPath=path.join(outputDir,path.parse(outputPath).name+".partial-"+process.pid+"-"+Date.now()+".mp4");
  const filter="fps="+fps+",scale="+width+":"+height+":force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
  const args=["-y","-hide_banner","-loglevel","error","-i",inputPath];
  if(musicPath)args.push("-stream_loop","-1","-i",musicPath);
