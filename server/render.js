@@ -103,7 +103,11 @@ async function renderVideo(options){
     throw new Error("动态画面预检失败：邀请函滚动位置没有发生有效变化。检测结果："+JSON.stringify(probe));
    }
    motionAudit.push(probe);
-   await w.page.evaluate(async()=>{window.weddingPlayer.renderAt(0);await window.weddingPlayer.renderCapture();});
+   await w.page.evaluate(async()=>{
+    const p=window.weddingPlayer;
+    p.chapters?.forEach(section=>{section.seen=false;if(section.header){section.header.style.opacity="";section.header.style.transform="";}});
+    p.renderAt(0);await p.renderCapture();
+   });
   }
   const timelineMs=primary.totalMs;
   encoder=startVideoEncoder({outputPath,fps,duration,musicPath});
