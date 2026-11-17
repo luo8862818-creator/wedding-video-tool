@@ -27,10 +27,6 @@ async function readPlaybackState(page){
    if(scrollables.length>=80)break;
   }
 
-  const semanticNodes=[
-   document.body,document.querySelector("main"),document.querySelector("#app"),
-   ...document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")
-  ];
   const semantic=[document.body,document.querySelector("main"),document.querySelector("#app"),
    ...Array.from(document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")).slice(0,100)].filter(Boolean);
   const motionSet=new Set(semantic),motion=[],contentRects=[];
@@ -46,7 +42,7 @@ async function readPlaybackState(page){
    const transform=style.transform||"none",translate=style.translate||"none";
    const round=value=>Math.round(value*2)/2;
    const transformed=transform!=="none"||translate!=="none";
-   motion.push([getId(element),transform,translate,style.top,style.left,style.opacity,style.animationName,
+   motion.push([getId(element),transform,translate,style.top,style.left,
     round(rect.x),round(rect.y),round(rect.width),round(rect.height)]);
    if(rect.height>innerHeight*1.15&&rect.width>innerWidth*.45){
     contentRects.push({top:rect.top,bottom:rect.bottom,height:rect.height,transformed});
@@ -72,6 +68,7 @@ async function readPlaybackState(page){
    return Math.max(best,progress);
   },0);
   const scrollProgress=scrollables.reduce((best,item)=>Math.max(best,item.max?item.top/item.max:0),0);
+  const maxScroll=scrollables.reduce((max,item)=>Math.max(max,item.max),0);
   const player=window.templatePlayer||window.weddingPlayer||window.invitationPlayer||null;
   const playerStarted=Boolean(player&&(player.started===true||player.playing===true||player.isPlaying===true));
   const hintNodes=[...document.querySelectorAll("#hint,[data-playback-state],[data-playback-status],[aria-live='polite']")];
@@ -80,12 +77,11 @@ async function readPlaybackState(page){
   const ended=/播放完成|播放结束|播放完毕|播放已结束|演示结束|已结束|playback complete|playback finished/i.test(hintText+" "+bodyState);
   const playingText=/正在自动播放|正在播放|播放中|playing/i.test(hintText+" "+bodyState);
   const motionSignature=JSON.stringify(motion);
-  const maxScroll=scrollables.reduce((max,item)=>Math.max(max,item.max),0);
   return {
    scrollables,rootId:getId(root),rootBottom,transformBottom,
    progress:Math.max(0,Math.min(1,Math.max(scrollProgress,transformProgress))),
    transformProgress,hasTransformContent:transformedRects.length>0,maxScroll,rootMax,
-   playerStarted,started:playerStarted||playingText||rootTop>1||scrollables.some(item=>item.top>1)||animations.some(a=>a.playState==="running"),
+   playerStarted,started:playerStarted||playingText||rootTop>1||scrollables.some(item=>item.top>1)||(maxScroll<20&&animations.some(a=>a.playState==="running")),
    ended,hintText,bodyState,motionSignature,finiteRunningAnimations,
    pageHeight:root.scrollHeight,viewportHeight:innerHeight,
    chapterCount:document.querySelectorAll(".chapter,.page,section").length
@@ -158,7 +154,7 @@ async function renderVideo(options){
   const startupTimeoutMs=30000;
   const markerTailMs=1200;
   const bottomTailMs=4500;
-  const idleEndMs=15000;
+  const idleEndMs=20000;
   let started=Boolean(initial.started),playbackDetectedAt=started?readyAt:0;
   let lastState=initial,lastActivityAt=readyAt,bottomSince=0,endedSince=0;
   let endReason="",lastProgressAt=0,latestState=initial;
@@ -225,7 +221,7 @@ async function renderVideo(options){
 
      // 无滚动条的纯 CSS/JS 分屏动画：在画面长时间完全静止后自动结束。
      // 有真实滚动容器但尚未到底时不使用此兜底，避免中途停顿被误判为结束。
-     if(activeScrollIds.size===0&&!state.hasTransformContent&&Date.now()-lastActivityAt>=idleEndMs&&state.finiteRunningAnimations===0){
+     if(state.maxScroll<20&&activeScrollIds.size===0&&!state.hasTransformContent&&Date.now()-lastActivityAt>=idleEndMs&&state.finiteRunningAnimations===0){
       endReason="页面动画停止变化";
       break;
      }
