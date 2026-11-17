@@ -6,7 +6,27 @@ const {renderVideo}=require("./render");
 const app=express(),HOST="127.0.0.1",PORT=Number(process.env.PORT||3000);
 const ROOT=path.resolve(__dirname,".."),OUTPUT_DIR=path.join(ROOT,"output"),WORKSPACE_DIR=path.join(ROOT,"workspaces");
 const jobs=new Map(),workspaces=new Map();let activeJobId=null;
+const HISTORY_FILE=path.join(OUTPUT_DIR,"export-history.json");
 fs.mkdirSync(OUTPUT_DIR,{recursive:true});fs.mkdirSync(WORKSPACE_DIR,{recursive:true});
+function readHistory(){
+ try{const data=JSON.parse(fs.readFileSync(HISTORY_FILE,"utf8"));return Array.isArray(data)?data:[];}
+ catch(error){if(error.code!=="ENOENT")console.warn("[history] 无法读取历史记录：",error.message);return [];}
+}
+function writeHistory(records){
+ const temp=HISTORY_FILE+".tmp";
+ fs.writeFileSync(temp,JSON.stringify(records.slice(0,100),null,2),"utf8");
+ fs.renameSync(temp,HISTORY_FILE);
+}
+function saveHistory(job){
+ const records=readHistory();
+ records.unshift({
+  id:job.id,status:job.status,startedAt:job.startedAt,finishedAt:job.finishedAt,
+  elapsedMs:job.elapsedMs,elapsedSeconds:Number((job.elapsedMs/1000).toFixed(1)),
+  outputName:job.outputName,duration:job.duration,fps:job.fps,width:job.width,height:job.height,
+  frameCount:job.frameCount,avgFps:job.avgFps,music:job.music,error:job.error||null
+ });
+ writeHistory(records);
+}
 app.use(express.json({limit:"1mb"}));app.use(express.static(ROOT,{index:"index.html",dotfiles:"ignore"}));
 function fail(res,status,error){return res.status(status).json({error});}
 function resolveInside(root,relative){
@@ -19,6 +39,7 @@ function resolveInside(root,relative){
  return target;
 }
 app.get("/api/health",(_req,res)=>res.json({ok:true,service:"wedding-video-tool"}));
+app.get("/api/history",(_req,res)=>res.json({items:readHistory()}));
 app.post("/api/workspaces",(_req,res)=>{
  const id=randomUUID(),workspacePath=path.join(WORKSPACE_DIR,id);
  fs.mkdirSync(workspacePath,{recursive:true});
@@ -58,13 +79,26 @@ app.post("/api/export",async(req,res)=>{
  if(![1080,1920].includes(width)||![1080,1920].includes(height)||width===height&&width!==1080)return fail(res,400,"视频尺寸不受支持。");
  const safeName=path.basename(String(body.outputName||"wedding-invitation.mp4")).replace(/[^\w\-.\u4e00-\u9fa5]/g,"_");
  const finalName=safeName.toLowerCase().endsWith(".mp4")?safeName:safeName+".mp4",jobId=randomUUID();
- const job={id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备渲染",outputName:finalName,outputUrl:"/api/output/"+encodeURIComponent(finalName),error:null};
+ const frameCount=Math.ceil(seconds*frameRate),startedAt=new Date().toISOString();
+ const job={id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备渲染",outputName:finalName,outputUrl:"/api/output/"+encodeURIComponent(finalName),error:null,startedAt,startedAtMs:Date.now(),duration:seconds,fps:frameRate,width,height,frameCount,music:Boolean(music)};
  jobs.set(jobId,job);activeJobId=jobId;res.status(202).json({jobId});
  renderVideo({sourcePath:source,musicPath:music,outputPath:path.join(OUTPUT_DIR,finalName),duration:seconds,fps:frameRate,width,height,onProgress:(progress,stepLabel,message)=>Object.assign(job,{progress,stepLabel,message})})
- .then(()=>Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"}))
+ .then(()=>{
+  Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"});
+ })
  .catch(error=>{job.status="failed";job.error=error.message||"未知导出错误";job.stepLabel="导出失败";console.error("[export:"+jobId+"]",error);})
- .finally(()=>{activeJobId=null;});
+ .finally(()=>{
+  job.finishedAt=new Date().toISOString();
+  job.elapsedMs=Math.max(0,Date.now()-job.startedAtMs);
+  job.avgFps=Number((job.frameCount/(job.elapsedMs/1000||1)).toFixed(2));
+  try{saveHistory(job);}catch(error){console.error("[history] 保存导出记录失败：",error);}
+  activeJobId=null;
+ });
 });
-app.get("/api/jobs/:id",(req,res)=>{const job=jobs.get(req.params.id);if(!job)return fail(res,404,"任务不存在或服务已重启。");res.json(job);});
+app.get("/api/jobs/:id",(req,res)=>{
+ const job=jobs.get(req.params.id);if(!job)return fail(res,404,"任务不存在或服务已重启。");
+ const elapsedMs=job.status==="running"?Date.now()-job.startedAtMs:(job.elapsedMs||0);
+ res.json({...job,elapsedMs,elapsedSeconds:Number((elapsedMs/1000).toFixed(1))});
+});
 app.get("/api/output/:name",(req,res)=>{const name=path.basename(req.params.name),filePath=path.join(OUTPUT_DIR,name);if(!fs.existsSync(filePath))return fail(res,404,"输出文件不存在。");res.sendFile(filePath);});
 app.listen(PORT,HOST,()=>{console.log("==========================================");console.log(" Wedding Video Tool 已启动");console.log(" 本地地址：http://"+HOST+":"+PORT);console.log(" 输出目录："+OUTPUT_DIR);console.log(" 按 Ctrl + C 停止服务");console.log("==========================================");});
