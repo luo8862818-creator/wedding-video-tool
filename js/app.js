@@ -46,6 +46,7 @@ musicInput.addEventListener("change",async()=>{
 });
 function showResult(result){
  const panel=$("#result-panel"),video=$("#result-video"),download=$("#download-link"),open=$("#open-video");
+ $("#poster-preview").hidden=true;
  const url=result.outputUrl+"?v="+Date.now();video.pause();video.src=url;video.load();download.href=result.outputUrl;download.download=result.outputName;download.textContent="下载 "+result.outputName;open.onclick=()=>window.open(result.outputUrl,"_blank","noopener");panel.hidden=false;
 }
 async function pollJob(jobId){
@@ -61,7 +62,7 @@ form.addEventListener("submit",async event=>{
  if(!workspaceId&&!sourcePath){showMessage("请先选择项目文件夹，或填写 HTML 文件完整路径。","error");return;}
  if(!Number.isFinite(finalDuration)||finalDuration<5||finalDuration>300){showMessage("按当前播放速度计算，最终视频时长必须在 5～300 秒之间。","error");return;}
  const payload={workspaceId,sourcePath,duration:Number(finalDuration.toFixed(3)),fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
- exportButton.disabled=true;$("#result-panel").hidden=true;setStatus("running","准备导出");setProgress(0,"正在提交任务");stepText.textContent="检查参数";fileText.textContent=payload.outputName;showMessage("正在连接本地导出服务……");
+ exportButton.disabled=true;$("#result-panel").hidden=true;$("#poster-preview").hidden=false;setStatus("running","准备导出");setProgress(0,"正在提交任务");stepText.textContent="检查参数";fileText.textContent=payload.outputName;showMessage("正在连接本地导出服务……");
  try{const result=await requestJson("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});setStatus("running","正在导出");showMessage("任务已启动。正在按设定速度逐帧渲染，请保持服务运行。");pollingTimer=setInterval(()=>pollJob(result.jobId),700);await pollJob(result.jobId);}
  catch(error){exportButton.disabled=false;setStatus("error","启动失败");showMessage(error.message,"error");}
 });
