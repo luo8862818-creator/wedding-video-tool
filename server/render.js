@@ -7,109 +7,196 @@ const {chromium}=require("playwright");
 const {transcodeRecordedVideo}=require("./ffmpeg");
 
 async function readPlaybackState(page){
- return page.evaluate(()=>{
-  const tracker=window.__weddingVideoTracker||(window.__weddingVideoTracker={ids:new WeakMap(),nextId:1});
-  const getId=element=>{
-   if(!tracker.ids.has(element))tracker.ids.set(element,tracker.nextId++);
-   return tracker.ids.get(element);
-  };
-  const root=document.scrollingElement||document.documentElement;
-  const all=[root,...Array.from(document.querySelectorAll("*")).slice(0,450)];
-  const unique=Array.from(new Set(all));
-  const scrollables=[];
-  for(const element of unique){
-   const max=Math.max(0,element.scrollHeight-element.clientHeight);
-   if(max<20)continue;
-   if(element!==root&&!/(auto|scroll|overlay)/.test(getComputedStyle(element).overflowY))continue;
-   scrollables.push({
-    id:getId(element),top:Math.max(0,Number(element.scrollTop)||0),max,
-    bottom:(Number(element.scrollTop)||0)>=max-4,isRoot:element===root
+ const frames=page.frames();
+ const snapshots=await Promise.all(frames.map(async(frame,frameIndex)=>{
+  try{
+   const state=await frame.evaluate(()=>{
+    const tracker=window.__weddingVideoTracker||(window.__weddingVideoTracker={ids:new WeakMap(),nextId:1});
+    const getId=element=>{
+     if(!tracker.ids.has(element))tracker.ids.set(element,tracker.nextId++);
+     return tracker.ids.get(element);
+    };
+    const root=document.scrollingElement||document.documentElement;
+    const all=[root,...Array.from(document.querySelectorAll("*")).slice(0,450)];
+    const unique=Array.from(new Set(all));
+    const scrollables=[];
+    for(const element of unique){
+     const max=Math.max(0,element.scrollHeight-element.clientHeight);
+     if(max<20)continue;
+     if(element!==root&&!/(auto|scroll|overlay)/.test(getComputedStyle(element).overflowY))continue;
+     scrollables.push({
+      id:getId(element),top:Math.max(0,Number(element.scrollTop)||0),max,
+      bottom:(Number(element.scrollTop)||0)>=max-4,isRoot:element===root,
+      tag:element.tagName,idName:element.id||"",className:String(element.className||"").slice(0,100)
+     });
+     if(scrollables.length>=80)break;
+    }
+
+    const semantic=[document.body,document.querySelector("main"),document.querySelector("#app"),
+     ...Array.from(document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")).slice(0,100)].filter(Boolean);
+    const semanticSet=new Set(semantic);
+    const motionSet=new Set(semantic),motion=[],contentRects=[];
+    for(const element of unique){
+     if(motionSet.size>=180)break;
+     const style=getComputedStyle(element);
+     if(style.transform!=="none"||style.translate!=="none"||(style.animationName&&style.animationName!=="none"))motionSet.add(element);
+    }
+    for(const element of motionSet){
+     const rect=element.getBoundingClientRect();
+     if(!rect.width&&!rect.height)continue;
+     const style=getComputedStyle(element);
+     const transform=style.transform||"none",translate=style.translate||"none";
+     const round=value=>Math.round(value*2)/2;
+     const transformed=transform!=="none"||translate!=="none";
+     const meaningfulArea=rect.width*rect.height>=innerWidth*innerHeight*.08;
+     if(semanticSet.has(element)||meaningfulArea){
+      motion.push([getId(element),transform,translate,style.top,style.left,
+       round(rect.x),round(rect.y),round(rect.width),round(rect.height)]);
+     }
+     if(rect.height>innerHeight*1.15&&rect.width>innerWidth*.45){
+      contentRects.push({top:rect.top,bottom:rect.bottom,height:rect.height,transformed});
+     }
+    }
+
+    const animations=document.getAnimations?document.getAnimations():[];
+    let finiteRunningAnimations=0,runningAnimations=0;
+    for(const animation of animations){
+     if(animation.playState!=="running")continue;
+     runningAnimations++;
+     const timing=animation.effect?.getComputedTiming?.();
+     if(timing&&timing.iterations!==Infinity)finiteRunningAnimations++;
+    }
+
+    const playerKey=["templatePlayer","weddingPlayer","invitationPlayer"].find(key=>{
+     try{return Boolean(window[key]);}catch(_){return false;}
+    })||null;
+    let player=null;
+    try{player=playerKey?window[playerKey]:null;}catch(_){}
+    const playerState=String(player?.state||"").toUpperCase();
+    const activePlayerStates=["INTRO_GIF","AUTO_SCROLL","OUTRO_GIF","FINISHED","USER_CONTROL"];
+    const finishedPlayerStates=["FINISHED","ENDED","COMPLETE","COMPLETED"];
+    const playerStarted=Boolean(player&&(
+     player.started===true||player.playing===true||player.isPlaying===true||
+     activePlayerStates.includes(playerState)
+    ));
+    const playerEnded=Boolean(player&&(
+     player.ended===true||player.finished===true||player.completed===true||
+     player.isFinished===true||finishedPlayerStates.includes(playerState)
+    ));
+    const playerErrors=Array.isArray(player?.errors)?player.errors.slice(0,12).map(String):[];
+    const loadingText=(document.querySelector("#loading")?.textContent||"").trim();
+    const playerTime=typeof player?.time==="number"&&Number.isFinite(player.time)?player.time:null;
+    const playerPaused=Boolean(player?.paused);
+    const globalEnded=Boolean(window.weddingVideoFinished===true||window.invitationFinished===true||window.__weddingVideoFinished===true);
+    const hintNodes=[...document.querySelectorAll("#hint,[data-playback-state],[data-playback-status],[aria-live='polite']")];
+    const hintText=hintNodes.map(el=>(el.textContent||"").trim()).filter(Boolean).join(" ");
+    const bodyState=String(document.body?.dataset?.playbackState||document.body?.dataset?.playbackStatus||"");
+    const ended=playerEnded||globalEnded||/播放完成|播放结束|播放完毕|播放已结束|演示结束|已结束|playback complete|playback finished/i.test(hintText+" "+bodyState);
+    const playingText=/正在自动播放|正在播放|播放中|playing/i.test(hintText+" "+bodyState);
+    const rootMax=Math.max(0,root.scrollHeight-root.clientHeight);
+    const rootTop=Math.max(0,Number(root.scrollTop)||0);
+    const rootBottom=rootMax>20&&rootTop>=rootMax-4;
+    const transformBottom=contentRects.some(rect=>rect.transformed&&rect.top<0&&rect.bottom<=innerHeight+5);
+    const transformedRects=contentRects.filter(rect=>rect.transformed);
+    const transformProgress=transformedRects.reduce((best,rect)=>{
+     const distance=Math.max(1,rect.height-innerHeight);
+     const progress=Math.max(0,Math.min(1,-rect.top/distance));
+     return Math.max(best,progress);
+    },0);
+    const scrollProgress=scrollables.reduce((best,item)=>Math.max(best,item.max?item.top/item.max:0),0);
+    const maxScroll=scrollables.reduce((max,item)=>Math.max(max,item.max),0);
+    const diagnostics=window.__weddingCaptureDiagnostics||{};
+    const scripts=Array.from(document.scripts).map(script=>({
+     src:script.src||"[inline]",
+     type:script.type||"classic",
+     async:Boolean(script.async),
+     defer:Boolean(script.defer)
+    })).slice(0,40);
+    const resources=(performance.getEntriesByType("resource")||[])
+     .filter(entry=>/\.(js|mjs|css|woff2?|ttf|otf|gif|webp|png|jpe?g|svg)(\?|$)/i.test(entry.name))
+     .slice(-60).map(entry=>({
+      url:entry.name,
+      type:entry.initiatorType,
+      duration:Number(entry.duration.toFixed(1)),
+      transferSize:Number(entry.transferSize||0)
+     }));
+    const globals=Object.keys(window).filter(key=>/wedding|invitation|player/i.test(key)).slice(0,60);
+    const images=Array.from(document.images);
+    const brokenImages=images.filter(image=>image.complete&&!image.naturalWidth).map(image=>image.currentSrc||image.src).slice(0,20);
+    const rootStyle=getComputedStyle(root);
+    return {
+     playerFound:Boolean(player),playerKey,playerState,
+     playerTime,playerPaused,playerStarted,playerEnded,playerErrors,loadingText,
+     started:playerStarted||playingText||rootTop>1||scrollables.some(item=>item.top>1)||(maxScroll<20&&runningAnimations>0),
+     ended:playerEnded||globalEnded||/播放完成|播放结束|播放完毕|播放已结束|演示结束|已结束|playback complete|playback finished/i.test(hintText+" "+bodyState),
+     scrollables,rootBottom,transformBottom,
+     progress:Math.max(0,Math.min(1,Math.max(scrollProgress,transformProgress))),
+     transformProgress,hasTransformContent:transformedRects.length>0,maxScroll,rootMax,
+     hintText,bodyState,motionSignature:JSON.stringify(motion),
+     finiteRunningAnimations,runningAnimations,
+     pageHeight:root.scrollHeight,viewportHeight:innerHeight,rootTop,
+     chapterCount:document.querySelectorAll(".chapter,.page,section").length,
+     documentTitle:document.title,documentUrl:location.href,readyState:document.readyState,
+     bodyClass:String(document.body?.className||"").slice(0,200),
+     rootOverflowY:rootStyle.overflowY,
+     hasInvitationNode:Boolean(document.querySelector("#invitation")),
+     hasMainNode:Boolean(document.querySelector("main")),
+     iframeCount:document.querySelectorAll("iframe").length,
+     configFound:Boolean(window.weddingConfig),
+     globals,scripts,resources,
+     imageCount:images.length,brokenImages,
+     captureEvents:Array.isArray(diagnostics.events)?diagnostics.events.slice(-15):[],
+     captureResourceErrors:Array.isArray(diagnostics.resourceErrors)?diagnostics.resourceErrors.slice(-20):[],
+     captureRejections:Array.isArray(diagnostics.unhandledRejections)?diagnostics.unhandledRejections.slice(-10):[]
+    };
    });
-   if(scrollables.length>=80)break;
+   return {
+    ...state,frameIndex,frameUrl:frame.url(),frameName:frame.name(),
+    isMainFrame:frame===page.mainFrame()
+   };
+  }catch(error){
+   return {
+    frameIndex,frameUrl:frame.url(),frameName:frame.name(),
+    isMainFrame:frame===page.mainFrame(),evaluateError:error.message,
+    playerFound:false,playerStarted:false,started:false,ended:false,
+    scrollables:[],motionSignature:"",progress:0,maxScroll:0,
+    pageHeight:0,viewportHeight:0
+   };
   }
+ }));
 
-  const semantic=[document.body,document.querySelector("main"),document.querySelector("#app"),
-   ...Array.from(document.querySelectorAll("[data-scroll-content],.pages,.slides,.content,.container,.invitation,[class*='scroll'],[id*='scroll'],[class*='page'],[id*='page'],[class*='slide'],[id*='slide']")).slice(0,100)].filter(Boolean);
-  const semanticSet=new Set(semantic);
-  const motionSet=new Set(semantic),motion=[],contentRects=[];
-  for(const element of unique){
-   if(motionSet.size>=180)break;
-   const style=getComputedStyle(element);
-   if(style.transform!=="none"||style.translate!=="none"||(style.animationName&&style.animationName!=="none"))motionSet.add(element);
-  }
-  for(const element of motionSet){
-   const rect=element.getBoundingClientRect();
-   if(!rect.width&&!rect.height)continue;
-   const style=getComputedStyle(element);
-   const transform=style.transform||"none",translate=style.translate||"none";
-   const round=value=>Math.round(value*2)/2;
-   const transformed=transform!=="none"||translate!=="none";
-   const meaningfulArea=rect.width*rect.height>=innerWidth*innerHeight*.08;
-   if(semanticSet.has(element)||meaningfulArea){
-    motion.push([getId(element),transform,translate,style.top,style.left,
-     round(rect.x),round(rect.y),round(rect.width),round(rect.height)]);
-   }
-   if(rect.height>innerHeight*1.15&&rect.width>innerWidth*.45){
-    contentRects.push({top:rect.top,bottom:rect.bottom,height:rect.height,transformed});
-   }
-  }
-
-  const animations=document.getAnimations?document.getAnimations():[];
-  let finiteRunningAnimations=0;
-  for(const animation of animations){
-   if(animation.playState!=="running")continue;
-   const timing=animation.effect?.getComputedTiming?.();
-   if(timing&&timing.iterations!==Infinity)finiteRunningAnimations++;
-  }
-
-  const rootMax=Math.max(0,root.scrollHeight-root.clientHeight);
-  const rootTop=Math.max(0,Number(root.scrollTop)||0);
-  const rootBottom=rootMax>20&&rootTop>=rootMax-4;
-  const transformBottom=contentRects.some(rect=>rect.transformed&&rect.top<0&&rect.bottom<=innerHeight+5);
-  const transformedRects=contentRects.filter(rect=>rect.transformed);
-  const transformProgress=transformedRects.reduce((best,rect)=>{
-   const distance=Math.max(1,rect.height-innerHeight);
-   const progress=Math.max(0,Math.min(1,-rect.top/distance));
-   return Math.max(best,progress);
-  },0);
-  const scrollProgress=scrollables.reduce((best,item)=>Math.max(best,item.max?item.top/item.max:0),0);
-  const maxScroll=scrollables.reduce((max,item)=>Math.max(max,item.max),0);
-  const player=window.templatePlayer||window.weddingPlayer||window.invitationPlayer||null;
-  const playerState=String(player?.state||"").toUpperCase();
-  // wedding-invitation 使用 INTRO_GIF -> AUTO_SCROLL -> OUTRO_GIF -> FINISHED 状态机；
-  // test 模板则使用 started/ended 布尔值，两种接口都必须识别。
-  const activePlayerStates=["INTRO_GIF","AUTO_SCROLL","OUTRO_GIF","FINISHED","USER_CONTROL"];
-  const finishedPlayerStates=["FINISHED","ENDED","COMPLETE","COMPLETED"];
-  const playerStarted=Boolean(player&&(
-   player.started===true||player.playing===true||player.isPlaying===true||
-   activePlayerStates.includes(playerState)
-  ));
-  const playerEnded=Boolean(player&&(
-   player.ended===true||player.finished===true||player.completed===true||
-   player.isFinished===true||finishedPlayerStates.includes(playerState)
-  ));
-  const playerErrors=Array.isArray(player?.errors)?player.errors.slice(0,8).map(String):[];
-  const loadingText=(document.querySelector("#loading")?.textContent||"").trim();
-  const playerTime=Number.isFinite(Number(player?.time))?Number(player.time):null;
-  const playerPaused=Boolean(player?.paused);
-  const globalEnded=Boolean(window.weddingVideoFinished===true||window.invitationFinished===true||window.__weddingVideoFinished===true);
-  const hintNodes=[...document.querySelectorAll("#hint,[data-playback-state],[data-playback-status],[aria-live='polite']")];
-  const hintText=hintNodes.map(el=>(el.textContent||"").trim()).filter(Boolean).join(" ");
-  const bodyState=String(document.body?.dataset?.playbackState||document.body?.dataset?.playbackStatus||"");
-  const ended=playerEnded||globalEnded||/播放完成|播放结束|播放完毕|播放已结束|演示结束|已结束|playback complete|playback finished/i.test(hintText+" "+bodyState);
-  const playingText=/正在自动播放|正在播放|播放中|playing/i.test(hintText+" "+bodyState);
-  const motionSignature=JSON.stringify(motion);
-  return {
-   scrollables,rootId:getId(root),rootBottom,transformBottom,
-   progress:Math.max(0,Math.min(1,Math.max(scrollProgress,transformProgress))),
-   transformProgress,hasTransformContent:transformedRects.length>0,maxScroll,rootMax,
-   playerStarted,playerState,playerTime,playerPaused,playerErrors,loadingText,
-   started:playerStarted||playingText||rootTop>1||scrollables.some(item=>item.top>1)||(maxScroll<20&&animations.some(a=>a.playState==="running")),
-   ended,hintText,bodyState,motionSignature,finiteRunningAnimations,
-   pageHeight:root.scrollHeight,viewportHeight:innerHeight,
-   chapterCount:document.querySelectorAll(".chapter,.page,section").length
-  };
- });
+ const usable=snapshots.filter(item=>!item.evaluateError);
+ const score=item=>
+  (item.playerFound?100000:0)+(item.playerStarted?50000:0)+(item.started?20000:0)+
+  ((item.scrollables||[]).length*100)+(item.hasTransformContent?50:0)+(item.isMainFrame?1:0);
+ const selected=usable.slice().sort((a,b)=>score(b)-score(a))[0]||snapshots[0]||{};
+ const frameIndex=Number(selected.frameIndex)||0;
+ const scrollables=(selected.scrollables||[]).map(item=>({
+  ...item,id:frameIndex*1000000+item.id,frameIndex,
+  frameUrl:selected.frameUrl||""
+ }));
+ const frameSnapshots=snapshots.map(item=>({
+  frameIndex:item.frameIndex,frameUrl:item.frameUrl,frameName:item.frameName,
+  isMainFrame:item.isMainFrame,evaluateError:item.evaluateError||"",
+  readyState:item.readyState||"",documentTitle:item.documentTitle||"",
+  playerFound:Boolean(item.playerFound),playerKey:item.playerKey||"",
+  playerState:item.playerState||"",playerTime:item.playerTime,
+  playerPaused:Boolean(item.playerPaused),playerStarted:Boolean(item.playerStarted),
+  playerErrors:item.playerErrors||[],loadingText:item.loadingText||"",
+  configFound:Boolean(item.configFound),globals:item.globals||[],
+  scripts:item.scripts||[],resources:item.resources||[],
+  brokenImages:item.brokenImages||[],captureEvents:item.captureEvents||[],
+  captureResourceErrors:item.captureResourceErrors||[],
+  captureRejections:item.captureRejections||[],
+  iframeCount:item.iframeCount||0,pageHeight:item.pageHeight||0,
+  viewportHeight:item.viewportHeight||0,scrollables:item.scrollables||[]
+ }));
+ return {
+  ...selected,scrollables,frameIndex,frameUrl:selected.frameUrl||"",
+  rootId:frameIndex*1000000+(selected.rootId||0),
+  frameCount:snapshots.length,frameSnapshots,
+  motionSignature:String(frameIndex)+"|"+(selected.motionSignature||"")
+ };
 }
 
 async function closeHttpServer(server){
@@ -167,17 +254,84 @@ async function renderVideo(options){
   });
   const page=await context.newPage();
   recording=page.video();
-  const pageErrors=[];
+  const pageErrors=[],networkIssues=[],consoleIssues=[],frameEvents=[];
+  const keepLast=(list,item,max=80)=>{list.push(item);if(list.length>max)list.shift();};
+  await page.addInitScript(()=>{
+   const store=window.__weddingCaptureDiagnostics={
+    events:[],resourceErrors:[],unhandledRejections:[]
+   };
+   const keep=(list,item,max)=>{
+    list.push(item);if(list.length>max)list.shift();
+   };
+   window.addEventListener("error",event=>{
+    const target=event.target;
+    const item={
+     message:event.message||"资源加载失败",
+     filename:event.filename||"",
+     line:event.lineno||0,column:event.colno||0,
+     resource:target&&(target.src||target.href)||"",
+     tag:target&&target.tagName||""
+    };
+    keep(store.events,item,60);
+    if(item.resource)keep(store.resourceErrors,item,60);
+   },true);
+   window.addEventListener("unhandledrejection",event=>{
+    const reason=event.reason;
+    keep(store.unhandledRejections,{
+     reason:String(reason?.stack||reason?.message||reason||"未知 Promise 异常")
+    },30);
+   });
+   document.addEventListener("DOMContentLoaded",()=>{
+    keep(store.events,{event:"DOMContentLoaded",time:Math.round(performance.now())},60);
+   });
+   window.addEventListener("load",()=>{
+    keep(store.events,{event:"load",time:Math.round(performance.now())},60);
+   });
+  });
   page.on("pageerror",error=>{
-   pageErrors.push(error.message);
-   console.error("[邀请函脚本错误]",error.message);
+   keepLast(pageErrors,{message:error.message,stack:error.stack||""});
+   console.error("[邀请函脚本异常]",error.stack||error.message);
   });
   page.on("console",message=>{
-   if(message.type()==="error"){
-    const detail=message.text();
-    pageErrors.push("console: "+detail);
-    console.error("[邀请函控制台]",detail);
+   if(message.type()==="error"||message.type()==="warning"){
+    const detail={type:message.type(),text:message.text(),location:message.location()};
+    keepLast(consoleIssues,detail);
+    if(message.type()==="error")console.error("[邀请函控制台]",message.text());
+    else console.warn("[邀请函控制台警告]",message.text());
    }
+  });
+  page.on("requestfailed",request=>{
+   const item={
+    type:"requestfailed",url:request.url(),resourceType:request.resourceType(),
+    error:request.failure()?.errorText||"unknown"
+   };
+   keepLast(networkIssues,item);
+   console.error("[邀请函资源请求失败]",JSON.stringify(item));
+  });
+  page.on("response",response=>{
+   if(response.status()>=400){
+    const item={
+     type:"http-error",status:response.status(),url:response.url(),
+     resourceType:response.request().resourceType()
+    };
+    keepLast(networkIssues,item);
+    console.error("[邀请函资源 HTTP 错误]",JSON.stringify(item));
+   }
+  });
+  page.on("frameattached",frame=>{
+   const item={event:"attached",url:frame.url(),name:frame.name()};
+   keepLast(frameEvents,item);
+   console.log("[网页子框架]",JSON.stringify(item));
+  });
+  page.on("framenavigated",frame=>{
+   const item={event:"navigated",url:frame.url(),name:frame.name(),main:frame===page.mainFrame()};
+   keepLast(frameEvents,item);
+   console.log("[网页框架导航]",JSON.stringify(item));
+  });
+  page.on("framedetached",frame=>{
+   const item={event:"detached",url:frame.url(),name:frame.name()};
+   keepLast(frameEvents,item);
+   console.log("[网页子框架卸载]",JSON.stringify(item));
   });
 
   const sourceApp=express();
@@ -195,7 +349,13 @@ async function renderVideo(options){
   await page.goto(sourceUrl,{waitUntil:"load",timeout:60000});
   const readyAt=Date.now();
   let initial=await readPlaybackState(page);
-  onProgress(5,"等待网页自动播放","网页已加载，正在识别自动滚动或 CSS 动画");
+  console.log("[render 页面初始诊断]",JSON.stringify({
+   sourcePath,sourceUrl,pageUrl:page.url(),title:await page.title(),
+   frameCount:initial.frameCount,selectedFrameIndex:initial.frameIndex,
+   selectedFrameUrl:initial.frameUrl,frames:initial.frameSnapshots,
+   pageErrors,consoleIssues,networkIssues,frameEvents
+  },null,2));
+  onProgress(5,"等待网页自动播放","网页已加载，正在检查主页面和 iframe 的播放器状态");
 
   const maxRecordingMs=300000;
   const startupTimeoutMs=30000;
@@ -204,13 +364,34 @@ async function renderVideo(options){
   const idleEndMs=20000;
   let started=Boolean(initial.started),playbackDetectedAt=started?readyAt:0;
   let lastState=initial,lastActivityAt=readyAt,bottomSince=0,endedSince=0;
-  let endReason="",lastProgressAt=0,latestState=initial;
+  let endReason="",lastProgressAt=0,latestState=initial,lastTraceAt=Date.now();
   const activeScrollIds=new Set(initial.scrollables.filter(item=>item.top>1).map(item=>item.id));
 
   while(Date.now()-readyAt<maxRecordingMs){
    await page.waitForTimeout(200);
    const state=await readPlaybackState(page);
    latestState=state;
+   if(Date.now()-lastTraceAt>=5000){
+    lastTraceAt=Date.now();
+    console.log("[render 播放追踪]",JSON.stringify({
+     elapsedSeconds:Number(((Date.now()-recordingStartedAt)/1000).toFixed(1)),
+     frameCount:state.frameCount,selectedFrameIndex:state.frameIndex,
+     frameUrl:state.frameUrl,playerFound:state.playerFound,
+     playerKey:state.playerKey,playerState:state.playerState,
+     playerTime:state.playerTime,playerPaused:state.playerPaused,
+     started:state.started,ended:state.ended,
+     loadingText:state.loadingText,playerErrors:state.playerErrors,
+     scrollables:state.scrollables,progress:state.progress,
+     pageHeight:state.pageHeight,viewportHeight:state.viewportHeight,
+     frames:state.frameSnapshots.map(frame=>({
+      frameIndex:frame.frameIndex,url:frame.frameUrl,readyState:frame.readyState,
+      playerFound:frame.playerFound,playerKey:frame.playerKey,
+      playerState:frame.playerState,playerTime:frame.playerTime,
+      loadingText:frame.loadingText,scriptSources:(frame.scripts||[]).map(script=>script.src),
+      evaluateError:frame.evaluateError
+     }))
+    }));
+   }
    let moved=false;
    const previousPositions=new Map(lastState.scrollables.map(item=>[item.id,item.top]));
    for(const item of state.scrollables){
@@ -229,14 +410,32 @@ async function renderVideo(options){
     onProgress(7,"真实网页播放录制","检测到网页开始运动，正在保留原始滚动速度和停顿");
    }
    if(!started&&Date.now()-readyAt>startupTimeoutMs){
-    const diagnostics=[
-     "播放器状态："+(state.playerState||"未暴露"),
-     "播放器时间："+(state.playerTime===null?"未知":state.playerTime+" ms"),
-     "预加载提示："+(state.loadingText||"无"),
-     state.playerErrors.length?"播放器资源错误："+state.playerErrors.join("；"):"",
-     pageErrors.length?"页面/控制台错误："+pageErrors.slice(-5).join("；"):""
-    ].filter(Boolean).join(" | ");
-    throw new Error("网页已加载，但 30 秒内没有进入自动播放状态。"+diagnostics+"。请检查邀请函资源是否加载完成。");
+    const report={
+     sourcePath,sourceUrl,pageUrl:page.url(),title:await page.title(),
+     elapsedSeconds:Number(((Date.now()-readyAt)/1000).toFixed(1)),
+     selectedFrameIndex:state.frameIndex,selectedFrameUrl:state.frameUrl,
+     frameCount:state.frameCount,frames:state.frameSnapshots,
+     pageErrors:pageErrors.slice(-30),consoleIssues:consoleIssues.slice(-30),
+     networkIssues:networkIssues.slice(-40),frameEvents:frameEvents.slice(-30)
+    };
+    console.error("[render 启动失败完整诊断]",JSON.stringify(report,null,2));
+    const frameSummary=state.frameSnapshots.map(frame=>{
+     const scripts=(frame.scripts||[]).map(script=>script.src.split("/").slice(-2).join("/")).join(",");
+     return "frame#"+frame.frameIndex+" "+(frame.isMainFrame?"主页面":"子页面")+
+      " url="+frame.frameUrl+" player="+(frame.playerKey||"无")+
+      " state="+(frame.playerState||"无")+" scripts=["+scripts+"]"+
+      (frame.evaluateError?" evaluateError="+frame.evaluateError:"");
+    }).join(" || ");
+    const issueSummary=networkIssues.slice(-8).map(item=>
+     item.type+":"+(item.status||item.error||"") +" "+item.url
+    ).join("；");
+    throw new Error(
+     "网页已加载，但 30 秒内没有进入自动播放状态。"+
+     "检测到 "+state.frameCount+" 个页面框架。"+frameSummary+
+     (pageErrors.length?"；JS异常："+pageErrors.slice(-5).map(item=>item.message).join("；"):"")+
+     (issueSummary?"；资源请求异常："+issueSummary:"")+
+     "。完整诊断已写入启动服务的 PowerShell 窗口，请复制 [render 启动失败完整诊断] 日志。"
+    );
    }
 
    if(started){
@@ -328,7 +527,11 @@ async function renderVideo(options){
    viewportHeight:latestState.viewportHeight,
    maxScroll:latestState.maxScroll,
    chapterCount:latestState.chapterCount,
-   pageErrors
+   frameCount:latestState.frameCount,
+   selectedFrameUrl:latestState.frameUrl,
+   playerKey:latestState.playerKey,
+   playerState:latestState.playerState,
+   pageErrors:pageErrors.map(item=>item.message)
   };
   console.log("[render metrics]",JSON.stringify(metrics,null,2));
   onProgress(100,"完成","MP4 已生成，实际时长 "+encoded.durationSeconds.toFixed(2)+" 秒",metrics);
