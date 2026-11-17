@@ -23,7 +23,7 @@ function saveHistory(job){
   id:job.id,status:job.status,startedAt:job.startedAt,finishedAt:job.finishedAt,
   elapsedMs:job.elapsedMs,elapsedSeconds:Number((job.elapsedMs/1000).toFixed(1)),
   outputName:job.outputName,duration:job.duration,fps:job.fps,width:job.width,height:job.height,
-  frameCount:job.frameCount,avgFps:job.avgFps,music:job.music,error:job.error||null
+  frameCount:job.frameCount,avgFps:job.avgFps,metrics:job.metrics||null,music:job.music,error:job.error||null
  });
  writeHistory(records);
 }
@@ -82,7 +82,7 @@ app.post("/api/export",async(req,res)=>{
  const frameCount=Math.ceil(seconds*frameRate),startedAt=new Date().toISOString();
  const job={id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备渲染",outputName:finalName,outputUrl:"/api/output/"+encodeURIComponent(finalName),error:null,startedAt,startedAtMs:Date.now(),duration:seconds,fps:frameRate,width,height,frameCount,music:Boolean(music)};
  jobs.set(jobId,job);activeJobId=jobId;res.status(202).json({jobId});
- renderVideo({sourcePath:source,musicPath:music,outputPath:path.join(OUTPUT_DIR,finalName),duration:seconds,fps:frameRate,width,height,onProgress:(progress,stepLabel,message)=>Object.assign(job,{progress,stepLabel,message})})
+ renderVideo({sourcePath:source,musicPath:music,outputPath:path.join(OUTPUT_DIR,finalName),duration:seconds,fps:frameRate,width,height,onProgress:(progress,stepLabel,message,metrics)=>Object.assign(job,{progress,stepLabel,message,...(metrics?{metrics}:{})})})
  .then(()=>{
   Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"});
  })
