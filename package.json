@@ -1,13 +1,21 @@
 {
   "name": "wedding-video-tool",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "本地 HTML 婚礼邀请函视频导出工具",
+  "main": "server/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs"
+  "keywords": ["wedding", "video", "playwright", "ffmpeg"],
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "playwright": "^1.56.0"
+  }
 }
