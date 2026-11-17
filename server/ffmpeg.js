@@ -19,7 +19,14 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg"}={}){
     const key=line.slice(0,index),value=line.slice(index+1);
     if(key==="frame")frame=Number.parseInt(value,10)||frame;
     if(key==="out_time_ms")outTimeUs=Number(value)||outTimeUs;
-    if(key==="progress")onProgress({frame,outTimeSeconds:outTimeUs/1000000,progress:value});
+    if(key==="progress"){
+     const state={frame,outTimeSeconds:outTimeUs/1000000,progress:value};
+     onProgress(state);
+     if(Date.now()-lastProgressLogAt>=5000){
+      lastProgressLogAt=Date.now();
+      logger?.info(phase+"进度",state);
+     }
+    }
    }
   });
   child.once("error",error=>{
@@ -28,8 +35,13 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg"}={}){
   });
   child.once("close",code=>{
    if(settled)return;settled=true;
-   if(code===0)resolve({frame,outTimeSeconds:outTimeUs/1000000,stderr});
-   else reject(new Error("FFmpeg 处理失败（退出码 "+code+"）。"+stderr.slice(-5000)));
+   if(code===0){
+    logger?.info(phase+"完成",{frame,outTimeSeconds:outTimeUs/1000000});
+    resolve({frame,outTimeSeconds:outTimeUs/1000000,stderr});
+   }else{
+    logger?.error(phase+"失败",{exitCode:code,stderr:stderr.slice(-5000)});
+    reject(new Error("FFmpeg 处理失败（退出码 "+code+"）。"+stderr.slice(-5000)));
+   }
   });
  });
 }
@@ -47,7 +59,7 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
  if(musicPath)args.push("-stream_loop","-1","-i",musicPath);
  args.push("-map","0:v:0");
  if(musicPath)args.push("-map","1:a:0");
- args.push("-vf",filter,"-c:v","libx264","-preset","veryfast","-crf","20","-pix_fmt","yuv420p","-fps_mode","cfr");
+ args.push("-vf",filter,"-c:v","libx264","-preset","fast","-crf","18","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","cfr");
  if(musicPath)args.push("-c:a","aac","-b:a","192k","-shortest");
  else args.push("-an");
  args.push("-movflags","+faststart","-progress","pipe:2",partialPath);
@@ -84,6 +96,7 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
    try{fs.rmSync(backupPath,{force:true});}
    catch(cleanupError){logger?.warn("旧视频备份清理失败",{message:cleanupError.message});}
   }
+  logger?.info("MP4 输出校验通过",{width,height,fps,durationSeconds,sizeBytes:size,frames:checked.frame,encodedFrames:converted.frame});
   return {
    frames:checked.frame,
    durationSeconds,
