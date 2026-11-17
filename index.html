@@ -38,7 +38,7 @@
             <button id="choose-folder" class="secondary-button" type="button">选择文件夹</button>
             <span id="folder-name" class="file-name">尚未选择项目文件夹</span>
           </div>
-          <small>请选择根目录包含 index.html 的文件夹，系统会保留资源相对路径。</small>
+          <small>请选择包含 index.html 的项目文件夹，系统会保留资源相对路径，并自动跳过 .git、node_modules、output 等无关目录；选择上一级目录时，也会尝试识别唯一的子项目。</small>
         </label>
         <label class="field">
           <span>或填写本机 HTML 文件完整路径 <small>（备用方式）</small></span>
