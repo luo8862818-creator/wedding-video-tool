@@ -74,7 +74,7 @@ async function renderVideo(options){
    if(frame>=frameCount)break;
    const controlStart=Date.now();
    let state;
-   if(mode==="timeline")state=await renderTimelineFrame(page,Math.min(ready.totalMs-1,frame/fps*1000));
+   if(mode==="timeline")state=await renderTimelineFrame(page,Math.min(ready.totalMs-1,frame/fps*1000*playbackRate));
    else state=await page.evaluate(()=>({mode:"live",state:document.body.dataset.playbackState||"LIVE",y:window.scrollY,scrollY:window.scrollY,pageHeight:(document.scrollingElement||document.documentElement).scrollHeight,mainTransform:getComputedStyle(document.querySelector("main")||document.body).transform}));
    timelineMsTotal+=Date.now()-controlStart;
    const shotStart=Date.now();
