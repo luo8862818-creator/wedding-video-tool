@@ -4,7 +4,8 @@ const path=require("node:path");
 const express=require("express");
 const http=require("node:http");
 const {chromium}=require("playwright");
-const {transcodeRecordedVideo,transcodeFrameStream}=require("./ffmpeg");
+const {transcodeRecordedVideo,transcodeFrameStream,encodeLiveFrames,ffmpegPath}=require("./ffmpeg");
+const {CaptureQueue,selectEncoder}=require("./live-capture");
 
 async function readPlaybackState(page){
  const frames=page.frames();
@@ -12,6 +13,32 @@ async function readPlaybackState(page){
   try{
    const state=await frame.evaluate(()=>{
     const tracker=window.__weddingVideoTracker||(window.__weddingVideoTracker={ids:new WeakMap(),nextId:1});
+    // Known players expose progress directly. Do not force layout on hundreds of
+    // elements every 500 ms while Chromium is trying to paint the next frame.
+    const knownKey=["templatePlayer","weddingPlayer","invitationPlayer"].find(key=>window[key]);
+    const known=knownKey&&window[knownKey];
+    if(known&&(Number.isFinite(known.totalMs)&&Number.isFinite(known.time)||["ended","finished","completed","isFinished"].some(key=>key in known))){
+     const state=String(known.state||"").toUpperCase(),time=Number.isFinite(known.time)?known.time:null;
+     const finished=Boolean(known.ended||known.finished||known.completed||known.isFinished||["FINISHED","ENDED","COMPLETE","COMPLETED"].includes(state));
+     if(finished&&!tracker.finishedAt){tracker.finishedAt=performance.now();tracker.remainingHoldMs=Number.isFinite(known.totalMs)&&time!==null?Math.max(0,known.totalMs-time):0;}
+     if(!finished){tracker.finishedAt=0;tracker.remainingHoldMs=0;}
+     const ended=finished&&performance.now()-tracker.finishedAt>=(tracker.remainingHoldMs||0);
+     const m=known.metrics||{},target=Number(known.target??m.endY)||0,y=Number(known.cameraY)||0;
+     const diagnostics=window.__weddingCaptureDiagnostics||{},stats=diagnostics.animationFrameStats||{};
+     const started=Boolean(known.started||known.playing||known.isPlaying||["INTRO_GIF","AUTO_SCROLL","OUTRO_GIF","FINISHED","USER_CONTROL"].includes(state));
+     return {playerFound:true,playerKey:knownKey,playerState:state,playerTime:time,playerPaused:Boolean(known.paused),
+      playerStarted:started,playerEnded:finished,playerTimelineTailHandled:Number.isFinite(known.totalMs)&&time!==null,
+      playerErrors:Array.isArray(known.errors)?known.errors.slice(0,12).map(String):[],loadingText:(document.querySelector("#loading")?.textContent||"").trim(),
+      started,ended,scrollables:[],rootBottom:false,transformBottom:false,hasTransformContent:true,
+      progress:target>0?Math.max(0,Math.min(1,y/target)):0,maxScroll:target,rootMax:target,rootTop:0,
+      motionSignature:knownKey+"|"+state+"|"+time+"|"+y,finiteRunningAnimations:0,runningAnimations:0,
+      pageHeight:Number(m.pageHeight)||0,viewportWidth:innerWidth,viewportHeight:innerHeight,
+      chapterCount:Number(m.chapters)||document.querySelectorAll(".chapter,.page,section").length,
+      readyState:document.readyState,documentTitle:document.title,configFound:Boolean(window.weddingConfig),
+      globals:[knownKey],scripts:[],resources:[],brokenImages:[],captureEvents:[],captureResourceErrors:diagnostics.resourceErrors||[],captureRejections:diagnostics.unhandledRejections||[],
+      animationFrameStats:{frames:stats.frames||0,longFrames:stats.longFrames||0,veryLongFrames:stats.veryLongFrames||0,maxGapMs:stats.maxGapMs||0,averageGapMs:stats.frames?stats.totalGapMs/stats.frames:0},
+      stateReadMode:"player-api"};
+    }
     const getId=element=>{
      if(!tracker.ids.has(element))tracker.ids.set(element,tracker.nextId++);
      return tracker.ids.get(element);
@@ -362,10 +389,11 @@ async function renderVideo(options){
  const captureProfile=resolveCaptureProfile(sourcePath,width,height);
  const logicalWidth=captureProfile.width;
  const logicalHeight=captureProfile.height;
- const deterministicCaptureScript=findDeterministicCaptureScript(sourcePath);
- const deterministicCapture=Boolean(deterministicCaptureScript);
+ const deterministicCapture=options.captureMode==="deterministic"||process.env.WEDDING_CAPTURE_MODE==="deterministic";
+ const deterministicCaptureScript=deterministicCapture?findDeterministicCaptureScript(sourcePath):null;
+ if(deterministicCapture&&!deterministicCaptureScript)throw new Error("该项目没有逐帧接口；请使用默认的连续录制模式。");
  const recordDir=fs.mkdtempSync(path.join(os.tmpdir(),"wedding-video-record-"));
- let browser=null,context=null,sourceServer=null,recording=null;
+ let browser=null,context=null,sourceServer=null,liveQueue=null,liveEncoding=null,liveError=null,livePage=null,liveProfile=null;
  const taskStartedAt=Date.now();
  try{
   logger.info("导出参数",{
@@ -375,7 +403,7 @@ async function renderVideo(options){
    deterministicCaptureScript:deterministicCaptureScript?path.relative(path.dirname(path.resolve(sourcePath)),deterministicCaptureScript):null
   });
   onProgress(1,"启动浏览器","创建原生分辨率网页录制环境");
-  browser=await chromium.launch({headless:true,args:[
+  browser=await chromium.launch({headless:true,...(process.env.WEDDING_BROWSER_CHANNEL?{channel:process.env.WEDDING_BROWSER_CHANNEL}:{}),args:[
    "--autoplay-policy=no-user-gesture-required",
    "--disable-background-timer-throttling",
    "--disable-renderer-backgrounding",
@@ -389,7 +417,7 @@ async function renderVideo(options){
    deviceScaleFactor:captureProfile.deviceScaleFactor,
    colorScheme:"light",
    reducedMotion:"no-preference",
-   ...(deterministicCapture?{}:{recordVideo:{dir:recordDir,size:{width:logicalWidth,height:logicalHeight},fps}})
+   // Continuous JPEG delivery is encoded once to H.264 below; no VP9 intermediate.
   });
   logger.info("浏览器录制配置",{
    browserVersion:browser.version(),
@@ -398,7 +426,17 @@ async function renderVideo(options){
    deviceScaleFactor:captureProfile.deviceScaleFactor,captureFps:fps
   });
   const page=await context.newPage();
-  recording=deterministicCapture?null:page.video();
+  livePage=page;
+  const livePath=path.join(recordDir,"live-h264.mkv");
+  if(!deterministicCapture){
+   if(!page.screencast?.start)throw new Error("需要 Playwright >=1.59 的连续 screencast 接口，请执行 npm ci。");
+   liveProfile=await selectEncoder(ffmpegPath,{width,height,fps,directory:recordDir});
+   liveQueue=new CaptureQueue(fps,{onOverflow:"error"});
+   liveEncoding=encodeLiveFrames({frames:liveQueue,outputPath:livePath,fps,profile:liveProfile,logger});
+   liveEncoding.catch(error=>{liveError=error;liveQueue.stop();});
+   logger.info("连续录制编码器",liveProfile);
+   await page.screencast.start({size:{width:logicalWidth,height:logicalHeight},fps,quality:92,onFrame:frame=>{try{liveQueue.push(frame);}catch(error){liveError=error;liveQueue.stop();}}});
+  }
   const pageErrors=[],networkIssues=[],consoleIssues=[],frameEvents=[];
   const keepLast=(list,item,max=80)=>{list.push(item);if(list.length>max)list.shift();};
   if(deterministicCapture)await page.addInitScript(()=>{window.__OFFLINE_CAPTURE=true;});
@@ -505,6 +543,7 @@ async function renderVideo(options){
   onProgress(3,"加载邀请函","通过本地 HTTP 加载网页；从页面打开开始记录真实播放");
   // 录制起点放在导航之前：网页自己的启动延迟、分段停顿和变速滚动都会完整保留。
   const recordingStartedAt=Date.now();
+  if(liveQueue)liveQueue.start(recordingStartedAt);
   await page.goto(sourceUrl,{waitUntil:"load",timeout:60000});
   const readyAt=Date.now();
   let initial=await readPlaybackState(page);
@@ -607,8 +646,10 @@ async function renderVideo(options){
 
   while(Date.now()-readyAt<maxRecordingMs){
    await page.waitForTimeout(500);
+   if(liveError)throw liveError;
    const state=await readPlaybackState(page);
    latestState=state;
+   if(state.playerErrors?.length)throw new Error("网页播放器错误："+state.playerErrors.join("；"));
    if(Date.now()-lastTraceAt>=5000){
     lastTraceAt=Date.now();
     logger.info("播放状态追踪",{
@@ -698,7 +739,7 @@ async function renderVideo(options){
 
     if(state.ended){
      if(!endedSince)endedSince=Date.now();
-     if(Date.now()-endedSince>=markerTailMs){
+     if(Date.now()-endedSince>=(state.playerTimelineTailHandled?0:markerTailMs)){
       endReason="网页播放完成标志";
       break;
      }
@@ -730,32 +771,40 @@ async function renderVideo(options){
   const captureSeconds=Math.max(0,(recordingEndedAt-recordingStartedAt)/1000);
   const detectedDelaySeconds=playbackDetectedAt?Math.max(0,(playbackDetectedAt-recordingStartedAt)/1000):0;
   onProgress(80,"网页播放完成","真实播放结束，正在整理录制文件",{recordingSeconds:Number(captureSeconds.toFixed(2)),scrollProgress:1});
+  await page.screencast.stop();
+  liveQueue.stop(recordingEndedAt);
+  const liveEncoded=await liveEncoding;
+  const captureStats=liveQueue.snapshot();
+  logger.info("连续录屏实际帧统计",captureStats);
+  if(captureStats.droppedSourceFrames)logger.warn("编码队列发生丢帧，请使用 30 FPS、硬件编码并关闭其他高负载程序。",captureStats);
   await context.close();
   context=null;
-  const recordedPath=await recording.path();
+  const recordedPath=livePath;
   await closeHttpServer(sourceServer);
   sourceServer=null;
   await browser.close();
   browser=null;
 
-  onProgress(82,"转换 MP4","正在转换为目标分辨率和帧率，不改变网页播放时间轴",{recordingSeconds:Number(captureSeconds.toFixed(2)),scrollProgress:1});
+  onProgress(82,"封装 MP4","H.264 已实时编码完成，正在封装并完整校验，不重复视频编码",{recordingSeconds:Number(captureSeconds.toFixed(2)),scrollProgress:1});
   const encoded=await transcodeRecordedVideo({
    inputPath:recordedPath,outputPath,musicPath,fps,width,height,
-   durationHint:captureSeconds,logger,
+   durationHint:captureSeconds,logger,copyVideo:true,
    onProgress:state=>{
     const ratio=captureSeconds>0?Math.min(1,state.outTimeSeconds/captureSeconds):0;
-    onProgress(82+ratio*16,"转换 MP4","已处理 "+state.frame+" 帧",{recordingSeconds:Number(captureSeconds.toFixed(2)),encodedFrames:state.frame});
+    onProgress(82+ratio*16,"封装 MP4","已封装 "+state.outTimeSeconds.toFixed(1)+" 秒",{recordingSeconds:Number(captureSeconds.toFixed(2)),encodedFrames:state.frame});
    }
   });
   const taskSeconds=(Date.now()-taskStartedAt)/1000;
   const metrics={
-   mode:"playwright-real-recording",
+   mode:"native-screencast-h264",
+   encoder:liveProfile.name,
+   captureStats,
    endReason,
    durationSeconds:encoded.durationSeconds,
    captureSeconds:Number(captureSeconds.toFixed(2)),
    detectedDelaySeconds:Number(detectedDelaySeconds.toFixed(3)),
    frames:encoded.frames,
-   encodedFrames:encoded.encodedFrames,
+   encodedFrames:liveEncoded.frame||captureStats.outputFrames,
    fps,
    avgFps:Number((encoded.frames/(encoded.durationSeconds||1)).toFixed(2)),
    totalSeconds:Number(taskSeconds.toFixed(2)),
@@ -779,6 +828,7 @@ async function renderVideo(options){
  }catch(error){
   throw error;
  }finally{
+  if(liveQueue){await livePage?.screencast.stop().catch(()=>{});liveQueue.stop();if(liveEncoding)await liveEncoding.catch(()=>{});}
   if(context)await context.close().catch(()=>{});
   if(browser)await browser.close().catch(()=>{});
   await closeHttpServer(sourceServer).catch(()=>{});
@@ -786,4 +836,5 @@ async function renderVideo(options){
  }
 }
 
-module.exports={renderVideo};
+module.exports={renderVideo,readPlaybackState,resolveCaptureProfile,findDeterministicCaptureScript};
+

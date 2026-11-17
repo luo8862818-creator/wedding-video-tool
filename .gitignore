@@ -21,3 +21,7 @@ logs/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Local QA dependencies and recovered tools
+.test-bin/
+.npm-cache/

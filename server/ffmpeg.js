@@ -1,12 +1,12 @@
 const fs=require("node:fs");
 const path=require("node:path");
 const {spawn}=require("node:child_process");
-const ffmpegPath=require("ffmpeg-static");
+const ffmpegPath=process.env.FFMPEG_PATH||require("ffmpeg-static");
 
-function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=null}={}){
+function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=null,binary=ffmpegPath}={}){
  return new Promise((resolve,reject)=>{
   const hasInputFrames=inputFrames!==null;
-  const child=spawn(ffmpegPath,args,{windowsHide:true,stdio:[hasInputFrames?"pipe":"ignore","ignore","pipe"]});
+  const child=spawn(binary,args,{windowsHide:true,stdio:[hasInputFrames?"pipe":"ignore","ignore","pipe"]});
   let stderr="",pending="",frame=0,outTimeUs=0,settled=false,lastProgressLogAt=0,inputError=null;
   child.stderr.on("data",chunk=>{
    const text=chunk.toString();
@@ -152,7 +152,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  }
 }
 
-async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{},logger}){
+async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{},logger,copyVideo=false}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!fs.existsSync(inputPath)||fs.statSync(inputPath).size===0)throw new Error("浏览器录制文件不存在或为空，无法生成 MP4。");
 
@@ -160,21 +160,21 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
  fs.mkdirSync(outputDir,{recursive:true});
  const partialPath=path.join(outputDir,path.parse(outputPath).name+".partial-"+process.pid+"-"+Date.now()+".mp4");
  const filter="fps="+fps+":round=near,scale="+width+":"+height+":flags=lanczos:force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
- logger?.info("FFmpeg 转码参数",{fps,width,height,filter,videoCodec:"libx264",preset:"fast",crf:18,music:Boolean(musicPath)});
+ logger?.info("FFmpeg 转码参数",{fps,width,height,filter,videoCodec:copyVideo?"copy":"libx264",preset:"fast",crf:18,music:Boolean(musicPath)});
  const args=["-y","-hide_banner","-loglevel","error","-i",inputPath];
  if(musicPath)args.push("-stream_loop","-1","-i",musicPath);
  args.push("-map","0:v:0");
  if(musicPath)args.push("-map","1:a:0");
- args.push("-vf",filter,"-c:v","libx264","-preset","fast","-crf","18","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","cfr");
+ if(copyVideo)args.push("-c:v","copy");
+ else args.push("-vf",filter,"-c:v","libx264","-preset","veryfast","-crf","18","-threads","2","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","cfr");
  if(musicPath)args.push("-c:a","aac","-b:a","192k","-shortest");
  else args.push("-an");
  args.push("-movflags","+faststart","-progress","pipe:2",partialPath);
 
  try{
-  onProgress(0,"开始转码");
+  onProgress({frame:0,outTimeSeconds:0,progress:"continue"});
   const converted=await runFfmpeg(args,{logger,phase:"MP4 视频编码",onProgress:state=>{
-   const ratio=durationHint>0?Math.min(1,state.outTimeSeconds/durationHint):0;
-   onProgress(ratio,"正在转码 MP4 · "+state.frame+" 帧");
+   onProgress(state);
   }});
   if(!fs.existsSync(partialPath)||fs.statSync(partialPath).size<1024)throw new Error("FFmpeg 未生成有效 MP4 文件。");
 
@@ -217,4 +217,8 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
  }
 }
 
-module.exports={transcodeRecordedVideo,transcodeFrameStream};
+async function encodeLiveFrames({frames,outputPath,fps,profile,logger}){
+ return runFfmpeg(["-y","-hide_banner","-loglevel","error","-threads","2","-probesize","32","-analyzeduration","0","-fpsprobesize","0","-f","image2pipe","-framerate",String(fps),"-vcodec","mjpeg","-i","pipe:0","-an",...profile.args,"-fps_mode","cfr","-progress","pipe:2",outputPath],{logger,phase:"连续 H.264 编码",inputFrames:frames,binary:profile.binary||ffmpegPath});
+}
+module.exports={transcodeRecordedVideo,transcodeFrameStream,encodeLiveFrames,ffmpegPath};
+

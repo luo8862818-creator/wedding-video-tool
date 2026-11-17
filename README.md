@@ -4,18 +4,19 @@ Windows 本地 HTML 婚礼邀请函视频导出工具。Playwright 负责真实�
 
 ## 当前导出流程
 
-1. 导入单个 HTML 文件，或导入包含 index.html 的完整项目文件夹。
-2. Playwright 启动 Chromium，通过本地 HTTP 服务打开网页。
-3. 浏览器按网页自身的 JavaScript、CSS、定时器和 requestAnimationFrame 正常运行；工具不接管虚拟时钟、不修改滚动速度。
-4. Playwright recordVideo 记录真实浏览器画面。网页慢速、快速、分段停顿和启动延迟都保留在录制时间轴中。
-5. 工具监测原生滚动容器、CSS transform 内容位移和页面完成标记，自动判断录制结束。
-6. FFmpeg 将浏览器录制文件转换为 H.264 MP4，输出目标分辨率与 FPS，并将可选音乐从视频起点合成到视频结束。
-7. 对 MP4 进行完整解码校验，读取实际帧数和时长。只有校验通过后才替换正式输出文件。
+1. 导入 HTML/完整项目，或填写本机 index.html 路径。导出期间暂停工具自己的实时预览，避免同时运行两份邀请函。
+2. Chromium 按网页自己的 JavaScript、CSS 和真实时间播放。默认连续录制，不自动切换逐帧 PNG 截图。
+3. 复用浏览器原生连续 JPEG 画面，经有界二进制队列直接送 FFmpeg，实时编码一次 H.264。时间戳采样保留原有停顿，不加速网页。
+4. 启动时实测可用编码器。软件使用 veryfast / CRF 18 / 两线程；硬件没有明显速度优势时优先软件，避免错误地把“能启动”当作“能稳定实时编码”。
+5. 结束时直接把 H.264 封装为 MP4，可同时合成背景音乐，无须再次视频转码。完整解码校验通过后才替换正式输出。
+6. 日志记录源帧率、输出帧数、队列丢帧、静止画面重复帧、网页 RAF 间隔及所选编码器。输出文件的 30 FPS 不等于源画面一定有 30 个不同画面。
+
+本次修复保留真实播放节奏，增加轻量播放器检测、实时 H.264 编码、进度修正及过载提示。
 
 ## 安装与启动
 
 ```powershell
-npm install
+npm ci
 npx playwright install chromium
 npm start
 ```
@@ -55,7 +56,7 @@ npm start
 
 - 默认输出：1080 × 1920、30 FPS、H.264、MP4。
 - 不预先计算 ceil(时长 × FPS) 作为必须匹配的帧数，避免小数时长产生最后一帧的 ±1 帧误报。
-- FFmpeg 转码到临时文件；完整解码校验通过后，才替换 output 目录中的正式 MP4。
+- FFmpeg 封装到临时文件；完整解码校验通过后，才替换 output 目录中的正式 MP4。
 - 导出历史记录保存实际视频时长、帧数、平均 FPS、导出耗时和结束判断原因。
 
 ## 本地文件说明
@@ -64,3 +65,37 @@ npm start
 - 输出视频保存在 output 目录。
 - 浏览器临时录制文件使用系统临时目录，任务结束后清理。
 - 服务仅绑定 127.0.0.1，不要暴露到公网。
+
+
+## 编码器与排查选项
+
+默认使用自动选择。Windows PowerShell 可在启动服务前设置：
+
+```powershell
+# 直接使用已安装的 Chrome，可免下载独立 Chromium
+$env:WEDDING_BROWSER_CHANNEL = "chrome"
+# 若驱动在真实录制中不稳定，强制使用限制两线程的软件编码
+$env:WEDDING_ENCODER = "software"
+npm start
+```
+
+`WEDDING_ENCODER` 也接受 `auto`、`h264_qsv`、`h264_nvenc`、`h264_amf`。指定硬件不可用时仍探测软件后备。可用 `FFMPEG_PATH` 指定主 FFmpeg，`FFMPEG_SOFTWARE_PATH` 指定带 libx264 的后备 FFmpeg；默认使用 ffmpeg-static。
+
+硬件/软件选择使用同尺寸的 30 张 JPEG 测试画面及真实 MP4 输出。它是启动探测，不能保证所有驱动在复杂长片中表现相同。编码队列超过约两秒/32 MiB 的界限时会停止并提示，避免悄悄生成已经丢帧的成片。正常静止段需要重复帧，这本身不是故障。
+
+兼容旧项目的逐帧接口只在显式设置 `WEDDING_CAPTURE_MODE=deterministic` 时使用；该模式需要网页提供 `renderAt/renderCapture`，速度通常慢得多。当前项目不需要设置这个变量。
+
+大项目优先填写本机 HTML 路径，避免反复上传同目录里并未引用的 JPG 原图。若源动画本身帧率很低，提高输出 FPS 不会增加动作细节。
+
+## 测试
+
+`npm test` 运行队列、时间戳、内存界限及过载保护测试。需要本机浏览器和 FFmpeg 的实测用例默认跳过，可执行：
+
+```powershell
+$env:RUN_MEDIA_TESTS = "1"
+$env:WEDDING_BROWSER_CHANNEL = "chrome"
+$env:WEDDING_ENCODER = "software"
+npm test
+```
+
+媒体用例实际录制一个短测试页面，完整解码验证 1080×1920 / 30 FPS，并检查 iframe 播放器检测、结尾停留和进度值。不会导出整个用户项目或上传照片。

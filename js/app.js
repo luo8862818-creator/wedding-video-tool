@@ -55,6 +55,7 @@ function hideLivePreview(){
 function showLivePreview(){
  if(!workspaceId||!previewUrl||!invitationPreview)return false;
  resultPanel.hidden=true;
+ if(invitationPreview.src==="about:blank"){invitationPreview.dataset.previewUrl=previewUrl;invitationPreview.src=previewUrl;}
  posterPreview.hidden=true;
  previewViewport.hidden=false;
  updatePreviewPreset();
@@ -414,16 +415,20 @@ async function pollJob(jobId){
   if(result.duration!==null&&result.duration!==undefined)$("#video-duration").textContent=formatSeconds(result.duration);
   else if(result.metrics?.recordingSeconds)$("#video-duration").textContent="录制中 · "+formatSeconds(result.metrics.recordingSeconds);
   if(result.status==="completed"){
+   reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;
    clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
    setStatus("success","导出完成");setProgress(100,"视频已生成");
    $("#video-duration").textContent=formatSeconds(result.duration);
    const captureInfo=result.metrics?.captureWidth&&result.metrics?.captureHeight
     ?("原始采集："+result.metrics.captureWidth+" × "+result.metrics.captureHeight+(result.metrics.nativeResolution?"（原生高清采集）。":"（采集后缩放）。"))
     :"";
-   showMessage("导出成功。"+captureInfo+"视频已按网页实际播放节奏生成，可以直接播放、拖动进度或下载 MP4。","success");
+   const captureStats=result.metrics?.captureStats;
+   const qualityInfo=captureStats?(" 编码器："+result.metrics.encoder+"；源画面采集约 "+captureStats.sourceFps+" FPS；队列丢帧 "+captureStats.droppedSourceFrames+"。源帧率包含停顿与静止画面，输出 FPS 不单独代表流畅度。 "):"";
+   showMessage("导出成功。"+captureInfo+qualityInfo+"可以播放或下载 MP4。","success");
    showResult(result);loadHistory();
   }
   if(result.status==="failed"){
+   reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;
    clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
    setStatus("error","导出失败");
    if(!showLivePreview())posterPreview.hidden=false;
@@ -451,10 +456,12 @@ form.addEventListener("submit",async event=>{
  };
  exportButton.disabled=true;
  resultPanel.hidden=true;
- if(!showLivePreview()){
-  previewViewport.hidden=true;
-  posterPreview.hidden=false;
- }
+ // Do not render a second live invitation and an old result video during export.
+ $("#result-video").pause();
+ invitationPreview.dataset.previewUrl="";invitationPreview.src="about:blank";
+ previewViewport.hidden=true;posterPreview.hidden=false;
+ reloadPreviewButton.disabled=true;openPreviewButton.disabled=true;
+ setPreviewStatus("导出中 · 预览暂时停止","loading");
  setStatus("running","准备录制");setProgress(0,"正在启动浏览器");
  stepText.textContent="等待网页播放";fileText.textContent=payload.outputName;
  $("#video-duration").textContent="等待录制";
@@ -468,8 +475,9 @@ form.addEventListener("submit",async event=>{
   pollingTimer=setInterval(()=>pollJob(result.jobId),500);
   await pollJob(result.jobId);
  }catch(error){
-  exportButton.disabled=false;setStatus("error","启动失败");showMessage(error.message,"error");
+  exportButton.disabled=false;reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;showLivePreview();setStatus("error","启动失败");showMessage(error.message,"error");
  }
 });
 
 loadHistory();
+

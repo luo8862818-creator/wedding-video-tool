@@ -8,7 +8,9 @@ module.exports = {
   // H.264 编码参数
   codec: "libx264",
   preset: "veryfast",
-  crf: 20,
+  crf: 18,
+  threads: 2,
   audioCodec: "aac",
   audioBitrate: "192k"
 };
+

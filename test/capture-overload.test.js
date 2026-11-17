@@ -1,0 +1,2 @@
+const test=require('node:test'),assert=require('node:assert/strict');const {CaptureQueue}=require('../server/live-capture');
+test('recording aborts on overload rather than silently exporting dropped source frames',()=>{const q=new CaptureQueue(30,{maxFrames:1,maxBytes:32,onOverflow:'error'});q.start(0);q.push({timestamp:0,data:Buffer.from('one')});assert.throws(()=>q.push({timestamp:100,data:Buffer.from('two')}),/编码器跟不上/);q.stop(200);});
