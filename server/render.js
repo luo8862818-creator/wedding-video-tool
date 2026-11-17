@@ -75,8 +75,23 @@ async function readPlaybackState(page){
   const scrollProgress=scrollables.reduce((best,item)=>Math.max(best,item.max?item.top/item.max:0),0);
   const maxScroll=scrollables.reduce((max,item)=>Math.max(max,item.max),0);
   const player=window.templatePlayer||window.weddingPlayer||window.invitationPlayer||null;
-  const playerStarted=Boolean(player&&(player.started===true||player.playing===true||player.isPlaying===true));
-  const playerEnded=Boolean(player&&(player.ended===true||player.finished===true||player.completed===true||player.isFinished===true||player.state==="ended"));
+  const playerState=String(player?.state||"").toUpperCase();
+  // wedding-invitation 使用 INTRO_GIF -> AUTO_SCROLL -> OUTRO_GIF -> FINISHED 状态机；
+  // test 模板则使用 started/ended 布尔值，两种接口都必须识别。
+  const activePlayerStates=["INTRO_GIF","AUTO_SCROLL","OUTRO_GIF","FINISHED","USER_CONTROL"];
+  const finishedPlayerStates=["FINISHED","ENDED","COMPLETE","COMPLETED"];
+  const playerStarted=Boolean(player&&(
+   player.started===true||player.playing===true||player.isPlaying===true||
+   activePlayerStates.includes(playerState)
+  ));
+  const playerEnded=Boolean(player&&(
+   player.ended===true||player.finished===true||player.completed===true||
+   player.isFinished===true||finishedPlayerStates.includes(playerState)
+  ));
+  const playerErrors=Array.isArray(player?.errors)?player.errors.slice(0,8).map(String):[];
+  const loadingText=(document.querySelector("#loading")?.textContent||"").trim();
+  const playerTime=Number.isFinite(Number(player?.time))?Number(player.time):null;
+  const playerPaused=Boolean(player?.paused);
   const globalEnded=Boolean(window.weddingVideoFinished===true||window.invitationFinished===true||window.__weddingVideoFinished===true);
   const hintNodes=[...document.querySelectorAll("#hint,[data-playback-state],[data-playback-status],[aria-live='polite']")];
   const hintText=hintNodes.map(el=>(el.textContent||"").trim()).filter(Boolean).join(" ");
@@ -88,7 +103,8 @@ async function readPlaybackState(page){
    scrollables,rootId:getId(root),rootBottom,transformBottom,
    progress:Math.max(0,Math.min(1,Math.max(scrollProgress,transformProgress))),
    transformProgress,hasTransformContent:transformedRects.length>0,maxScroll,rootMax,
-   playerStarted,started:playerStarted||playingText||rootTop>1||scrollables.some(item=>item.top>1)||(maxScroll<20&&animations.some(a=>a.playState==="running")),
+   playerStarted,playerState,playerTime,playerPaused,playerErrors,loadingText,
+   started:playerStarted||playingText||rootTop>1||scrollables.some(item=>item.top>1)||(maxScroll<20&&animations.some(a=>a.playState==="running")),
    ended,hintText,bodyState,motionSignature,finiteRunningAnimations,
    pageHeight:root.scrollHeight,viewportHeight:innerHeight,
    chapterCount:document.querySelectorAll(".chapter,.page,section").length
@@ -157,7 +173,11 @@ async function renderVideo(options){
    console.error("[邀请函脚本错误]",error.message);
   });
   page.on("console",message=>{
-   if(message.type()==="error")console.error("[邀请函控制台]",message.text());
+   if(message.type()==="error"){
+    const detail=message.text();
+    pageErrors.push("console: "+detail);
+    console.error("[邀请函控制台]",detail);
+   }
   });
 
   const sourceApp=express();
@@ -209,7 +229,14 @@ async function renderVideo(options){
     onProgress(7,"真实网页播放录制","检测到网页开始运动，正在保留原始滚动速度和停顿");
    }
    if(!started&&Date.now()-readyAt>startupTimeoutMs){
-    throw new Error("网页已加载，但 30 秒内没有检测到自动播放、滚动或 CSS 位移动画。请确认打开网页后会自行播放。");
+    const diagnostics=[
+     "播放器状态："+(state.playerState||"未暴露"),
+     "播放器时间："+(state.playerTime===null?"未知":state.playerTime+" ms"),
+     "预加载提示："+(state.loadingText||"无"),
+     state.playerErrors.length?"播放器资源错误："+state.playerErrors.join("；"):"",
+     pageErrors.length?"页面/控制台错误："+pageErrors.slice(-5).join("；"):""
+    ].filter(Boolean).join(" | ");
+    throw new Error("网页已加载，但 30 秒内没有进入自动播放状态。"+diagnostics+"。请检查邀请函资源是否加载完成。");
    }
 
    if(started){
