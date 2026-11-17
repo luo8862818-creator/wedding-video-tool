@@ -36,6 +36,8 @@ async function renderVideo(options){
   browser=await chromium.launch({headless:true,args:["--disable-background-timer-throttling","--disable-renderer-backgrounding","--disable-backgrounding-occluded-windows","--disable-features=CalculateNativeWinOcclusion"]});
   context=await browser.newContext({viewport:{width:logicalWidth,height:logicalHeight},deviceScaleFactor,colorScheme:"light",reducedMotion:"no-preference"});
   const page=await context.newPage();
+  // 虚拟时钟必须在导航前安装，才能接管页面脚本中的 Date、定时器、requestAnimationFrame 与 performance。
+  await page.clock.install({time:new Date("2025-01-01T00:00:00.000Z")});
   page.on("pageerror",e=>console.error("[邀请函脚本错误]",e.message));
   page.on("console",m=>{if(m.type()==="error")console.error("[邀请函控制台]",m.text());});
   const sourceApp=express();sourceApp.use(express.static(path.dirname(sourcePath),{dotfiles:"allow",fallthrough:false}));
@@ -56,17 +58,14 @@ async function renderVideo(options){
    await page.evaluate(()=>{const p=window.weddingPlayer;p.paused=true;if(p.raf)cancelAnimationFrame(p.raf);p.raf=null;p.last=null;p.chapters?.forEach(s=>{s.seen=false;if(s.header){s.header.style.opacity="";s.header.style.transform="";}});});
    await renderTimelineFrame(page,0);
   }else{
-   // 不设置 OFFLINE_CAPTURE，不接管滚动，不假设页面一定有 scrollHeight。
-   // 让 preview.js / CSS animation / GIF / requestAnimationFrame 按网页原本逻辑自然播放。
-   await page.waitForTimeout(100);
+   // 页面启动延时也走虚拟时间：例如模板的 setTimeout(start, 2000)。
+   // 不使用真实等待，避免截图慢时网页动画先于视频帧播放完毕。
+   await page.clock.runFor(2000);
   }
-  onProgress(5,"开始实时录制",mode==="timeline"?"使用邀请函时间轴逐帧控制":"使用浏览器真实播放；保留网页自己的自动滚动和动画");
+  onProgress(5,"开始逐帧渲染",mode==="timeline"?"使用时间轴接口并推进虚拟时钟":"使用虚拟时钟逐帧驱动网页自己的滚动、CSS 动画和 requestAnimationFrame");
   encoder=startVideoEncoder({outputPath,fps,duration,musicPath,expectedFrames:frameCount});
-  const frameInterval=1000/fps,recordStart=Date.now();
+  const frameInterval=1000/fps;
   for(let frame=0;frame<frameCount;frame++){
-   const targetTime=recordStart+frame*frameInterval;
-   const delay=targetTime-Date.now();
-   if(delay>0)await page.waitForTimeout(delay);
    const controlStart=Date.now();
    let state;
    if(mode==="timeline")state=await renderTimelineFrame(page,Math.min(ready.totalMs-1,frame/fps/duration*ready.totalMs));
@@ -85,6 +84,9 @@ async function renderVideo(options){
    }
    if(frame===0){const actual=jpegSize(image);if(!actual||actual.width!==width||actual.height!==height)throw new Error("截图尺寸错误："+JSON.stringify(actual)+"，预期 "+width+"×"+height);}
    const waitStart=Date.now();await encoder.writeFrame(image);encoderWaitMs+=Date.now()-waitStart;
+   // 每输出一帧只推进 1/FPS 的页面时间。截图/编码耗时不会推进网页动画时间，
+   // 因此即使机器实际只能处理 14 FPS，输出视频仍保持正确的 30 FPS 时间轴。
+   if(frame<frameCount-1)await page.clock.runFor(frameInterval);
    if(frame%Math.max(1,Math.floor(fps/2))===0||frame===frameCount-1){
     const written=frame+1,elapsed=(Date.now()-startedAt)/1000;
     onProgress(5+written/frameCount*90,"实时录制与编码","第 "+written+" / "+frameCount+" 帧 · "+(written/Math.max(elapsed,.001)).toFixed(1)+" 帧/秒");
@@ -95,7 +97,7 @@ async function renderVideo(options){
   onProgress(96,"封装视频","正在完成 MP4 编码");
   const encoded=await encoder.finish();encoder=null;
   if(encoded.frames!==frameCount)throw new Error("MP4 帧数不一致：渲染 "+frameCount+" 帧，编码 "+encoded.frames+" 帧。");
-  const elapsedMs=Date.now()-startedAt,metrics={mode,frames:frameCount,workerCount:1,outputWidth:width,outputHeight:height,cssViewportWidth:logicalWidth,cssViewportHeight:logicalHeight,deviceScaleFactor,timelineMs:ready.totalMs||null,timelineMsTotal,screenshotMs,encoderWaitMs,totalSeconds:Number((elapsedMs/1000).toFixed(2)),avgFps:Number((frameCount/(elapsedMs/1000||1)).toFixed(2)),pageHeight:ready.pageHeight,chapterCount:ready.chapterCount,sampleFrames:samples,distinctSampleFrames:distinctHashes.size};
+  const elapsedMs=Date.now()-startedAt,metrics={mode,clockMode:"playwright-virtual-time",virtualDurationSeconds:Number((frameCount/fps).toFixed(3)),frames:frameCount,workerCount:1,outputWidth:width,outputHeight:height,cssViewportWidth:logicalWidth,cssViewportHeight:logicalHeight,deviceScaleFactor,timelineMs:ready.totalMs||null,timelineMsTotal,screenshotMs,encoderWaitMs,totalSeconds:Number((elapsedMs/1000).toFixed(2)),avgFps:Number((frameCount/(elapsedMs/1000||1)).toFixed(2)),pageHeight:ready.pageHeight,chapterCount:ready.chapterCount,sampleFrames:samples,distinctSampleFrames:distinctHashes.size};
   console.log("[render metrics]",JSON.stringify(metrics,null,2));
   onProgress(100,"完成","MP4 已生成；录制模式："+mode+"；耗时 "+metrics.totalSeconds+" 秒",metrics);
  }catch(error){if(encoder){try{await encoder.abort(error);}catch(_){}encoder=null;}throw error;}
