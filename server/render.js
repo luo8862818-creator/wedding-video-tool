@@ -331,14 +331,13 @@ async function renderVideo(options){
   });
   page.on("pageerror",error=>{
    keepLast(pageErrors,{message:error.message,stack:error.stack||""});
-   console.error("[邀请函脚本异常]",error.stack||error.message);
+   logger.error("邀请函页面脚本异常",{message:error.message,stack:error.stack||""});
   });
   page.on("console",message=>{
    if(message.type()==="error"||message.type()==="warning"){
     const detail={type:message.type(),text:message.text(),location:message.location()};
     keepLast(consoleIssues,detail);
-    if(message.type()==="error")console.error("[邀请函控制台]",message.text());
-    else console.warn("[邀请函控制台警告]",message.text());
+    logger.write(message.type()==="error"?"ERROR":"WARN","邀请函控制台消息",detail);
    }
   });
   page.on("requestfailed",request=>{
@@ -347,7 +346,7 @@ async function renderVideo(options){
     error:request.failure()?.errorText||"unknown"
    };
    keepLast(networkIssues,item);
-   console.error("[邀请函资源请求失败]",JSON.stringify(item));
+   logger.error("邀请函资源请求失败",item);
   });
   page.on("response",response=>{
    if(response.status()>=400){
@@ -356,23 +355,23 @@ async function renderVideo(options){
      resourceType:response.request().resourceType()
     };
     keepLast(networkIssues,item);
-    console.error("[邀请函资源 HTTP 错误]",JSON.stringify(item));
+    logger.error("邀请函资源 HTTP 错误",item);
    }
   });
   page.on("frameattached",frame=>{
    const item={event:"attached",url:frame.url(),name:frame.name()};
    keepLast(frameEvents,item);
-   console.log("[网页子框架]",JSON.stringify(item));
+   logger.info("网页子框架附加",item);
   });
   page.on("framenavigated",frame=>{
    const item={event:"navigated",url:frame.url(),name:frame.name(),main:frame===page.mainFrame()};
    keepLast(frameEvents,item);
-   console.log("[网页框架导航]",JSON.stringify(item));
+   logger.info("网页框架导航",item);
   });
   page.on("framedetached",frame=>{
    const item={event:"detached",url:frame.url(),name:frame.name()};
    keepLast(frameEvents,item);
-   console.log("[网页子框架卸载]",JSON.stringify(item));
+   logger.info("网页子框架卸载",item);
   });
 
   const sourceApp=express();
@@ -390,12 +389,12 @@ async function renderVideo(options){
   await page.goto(sourceUrl,{waitUntil:"load",timeout:60000});
   const readyAt=Date.now();
   let initial=await readPlaybackState(page);
-  console.log("[render 页面初始诊断]",JSON.stringify({
+  logger.info("页面初始诊断",{
    sourcePath,sourceUrl,pageUrl:page.url(),title:await page.title(),
    frameCount:initial.frameCount,selectedFrameIndex:initial.frameIndex,
    selectedFrameUrl:initial.frameUrl,frames:initial.frameSnapshots,
    pageErrors,consoleIssues,networkIssues,frameEvents
-  },null,2));
+  });
   onProgress(5,"等待网页自动播放","网页已加载，正在检查主页面和 iframe 的播放器状态");
 
   const maxRecordingMs=300000;
@@ -414,7 +413,7 @@ async function renderVideo(options){
    latestState=state;
    if(Date.now()-lastTraceAt>=5000){
     lastTraceAt=Date.now();
-    console.log("[render 播放追踪]",JSON.stringify({
+    logger.info("播放状态追踪",{
      elapsedSeconds:Number(((Date.now()-recordingStartedAt)/1000).toFixed(1)),
      frameCount:state.frameCount,selectedFrameIndex:state.frameIndex,
      frameUrl:state.frameUrl,playerFound:state.playerFound,
@@ -431,7 +430,7 @@ async function renderVideo(options){
       loadingText:frame.loadingText,scriptSources:(frame.scripts||[]).map(script=>script.src),
       evaluateError:frame.evaluateError
      }))
-    }));
+    });
    }
    let moved=false;
    const previousPositions=new Map(lastState.scrollables.map(item=>[item.id,item.top]));
@@ -459,7 +458,7 @@ async function renderVideo(options){
      pageErrors:pageErrors.slice(-30),consoleIssues:consoleIssues.slice(-30),
      networkIssues:networkIssues.slice(-40),frameEvents:frameEvents.slice(-30)
     };
-    console.error("[render 启动失败完整诊断]",JSON.stringify(report,null,2));
+    logger.error("启动失败完整诊断",report);
     const frameSummary=state.frameSnapshots.map(frame=>{
      const scripts=(frame.scripts||[]).map(script=>script.src.split("/").slice(-2).join("/")).join(",");
      return "frame#"+frame.frameIndex+" "+(frame.isMainFrame?"主页面":"子页面")+
@@ -475,7 +474,7 @@ async function renderVideo(options){
      "检测到 "+state.frameCount+" 个页面框架。"+frameSummary+
      (pageErrors.length?"；JS异常："+pageErrors.slice(-5).map(item=>item.message).join("；"):"")+
      (issueSummary?"；资源请求异常："+issueSummary:"")+
-     "。完整诊断已写入启动服务的 PowerShell 窗口，请复制 [render 启动失败完整诊断] 日志。"
+     "。完整诊断已保存到本次任务日志文件，可直接在页面下载。"
     );
    }
 
@@ -542,7 +541,7 @@ async function renderVideo(options){
   onProgress(82,"转换 MP4","正在转换为目标分辨率和帧率，不改变网页播放时间轴",{recordingSeconds:Number(captureSeconds.toFixed(2)),scrollProgress:1});
   const encoded=await transcodeRecordedVideo({
    inputPath:recordedPath,outputPath,musicPath,fps,width,height,
-   durationHint:captureSeconds,
+   durationHint:captureSeconds,logger,
    onProgress:state=>{
     const ratio=captureSeconds>0?Math.min(1,state.outTimeSeconds/captureSeconds):0;
     onProgress(82+ratio*16,"转换 MP4","已处理 "+state.frame+" 帧",{recordingSeconds:Number(captureSeconds.toFixed(2)),encodedFrames:state.frame});
@@ -574,7 +573,7 @@ async function renderVideo(options){
    playerState:latestState.playerState,
    pageErrors:pageErrors.map(item=>item.message)
   };
-  console.log("[render metrics]",JSON.stringify(metrics,null,2));
+  logger.info("导出指标",metrics);
   onProgress(100,"完成","MP4 已生成，实际时长 "+encoded.durationSeconds.toFixed(2)+" 秒",metrics);
  }catch(error){
   throw error;
