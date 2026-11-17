@@ -21,16 +21,11 @@
     </section>
     <section class="workspace">
       <form id="export-form" class="settings-card">
-        <div class="section-heading"><div><span class="step">01</span><h2>选择邀请函项目</h2></div><span class="required-note">优先选择整个文件夹</span></div>
+        <div class="section-heading"><div><span class="step">01</span><h2>选择邀请函项目</h2></div><span class="required-note">自动识别根目录 index.html</span></div>
         <label class="field">
           <span>邀请函项目文件夹 <b>*</b></span>
           <div class="picker-row"><input id="project-folder" type="file" webkitdirectory directory multiple hidden><button id="choose-folder" class="secondary-button" type="button">选择文件夹</button><span id="folder-name" class="file-name">尚未选择项目文件夹</span></div>
-          <small>请选择包含 index.html、css、js、assets 等目录的完整文件夹，系统会保留相对路径，避免图片和字体丢失。</small>
-        </label>
-        <label class="field">
-          <span>或直接填写 HTML 文件完整路径 <small>（可选备用方式）</small></span>
-          <input id="source-path" name="sourcePath" type="text" placeholder="例如：C:\Users\用户名\Desktop\wedding\index.html">
-          <small>使用路径方式时，请确保图片、字体等素材仍在原目录结构中。</small>
+          <small>选择包含 index.html 的项目文件夹即可。系统自动识别根目录 index.html，并完整导入图片、CSS、JS、字体等素材。</small>
         </label>
         <label class="field">
           <span>背景音乐 <small>（可选）</small></span>
