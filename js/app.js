@@ -1,128 +1,55 @@
-const form = document.querySelector("#export-form");
-const exportButton = document.querySelector("#export-button");
-const presetSelect = document.querySelector("#preset");
-const resolutionLabel = document.querySelector("#resolution-label");
-const statusPill = document.querySelector("#status-pill");
-const progressText = document.querySelector("#progress-text");
-const progressValue = document.querySelector("#progress-value");
-const progressBar = document.querySelector("#progress-bar");
-const stepText = document.querySelector("#step-text");
-const fileText = document.querySelector("#file-text");
-const message = document.querySelector("#message");
-const downloadLink = document.querySelector("#download-link");
-
-const presets = {
-  portrait: { width: 1080, height: 1920, label: "1080 × 1920" },
-  landscape: { width: 1920, height: 1080, label: "1920 × 1080" },
-  square: { width: 1080, height: 1080, label: "1080 × 1080" }
-};
-
-let pollingTimer = null;
-
-function updateResolution() {
-  resolutionLabel.textContent = presets[presetSelect.value].label;
-}
-presetSelect.addEventListener("change", updateResolution);
-
-function setStatus(type, text) {
-  statusPill.className = `status-pill ${type}`;
-  statusPill.textContent = text;
-}
-
-function setProgress(percent, label) {
-  const safePercent = Math.max(0, Math.min(100, Math.round(percent || 0)));
-  progressBar.style.width = `${safePercent}%`;
-  progressValue.textContent = `${safePercent}%`;
-  if (label) progressText.textContent = label;
-}
-
-function showMessage(text, type = "") {
-  message.textContent = text;
-  message.className = `message ${type}`;
-}
-
-async function pollJob(jobId) {
-  try {
-    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "无法获取任务状态");
-
-    setProgress(result.progress, result.message);
-    stepText.textContent = result.stepLabel || "处理中";
-    fileText.textContent = result.outputName || "生成中";
-
-    if (result.status === "completed") {
-      clearInterval(pollingTimer);
-      pollingTimer = null;
-      exportButton.disabled = false;
-      setStatus("success", "导出完成");
-      setProgress(100, "视频已生成");
-      showMessage("导出成功。请检查 output 文件夹中的 MP4 文件。", "success");
-      downloadLink.href = result.outputUrl;
-      downloadLink.textContent = `打开文件：${result.outputName}`;
-      downloadLink.hidden = false;
-      return;
-    }
-
-    if (result.status === "failed") {
-      clearInterval(pollingTimer);
-      pollingTimer = null;
-      exportButton.disabled = false;
-      setStatus("error", "导出失败");
-      showMessage(result.error || "导出失败，请查看服务端终端日志。", "error");
-    }
-  } catch (error) {
-    clearInterval(pollingTimer);
-    pollingTimer = null;
-    exportButton.disabled = false;
-    setStatus("error", "连接中断");
-    showMessage(error.message, "error");
-  }
-}
-
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (pollingTimer) clearInterval(pollingTimer);
-
-  const preset = presets[presetSelect.value];
-  const payload = {
-    sourcePath: document.querySelector("#source-path").value.trim(),
-    musicPath: document.querySelector("#music-path").value.trim(),
-    duration: Number(document.querySelector("#duration").value),
-    fps: Number(document.querySelector("#fps").value),
-    width: preset.width,
-    height: preset.height,
-    outputName: document.querySelector("#output-name").value.trim()
-  };
-
-  exportButton.disabled = true;
-  downloadLink.hidden = true;
-  setStatus("running", "准备导出");
-  setProgress(0, "正在提交任务");
-  stepText.textContent = "检查参数";
-  fileText.textContent = payload.outputName || "待生成";
-  showMessage("正在连接本地导出服务……");
-
-  try {
-    const response = await fetch("/api/export", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "创建导出任务失败");
-
-    setStatus("running", "正在导出");
-    showMessage("任务已启动。渲染期间请保持服务运行。");
-    await pollJob(result.jobId);
-    if (exportButton.disabled) {
-      pollingTimer = setInterval(() => pollJob(result.jobId), 700);
-    }
-  } catch (error) {
-    exportButton.disabled = false;
-    setStatus("error", "启动失败");
-    showMessage(error.message, "error");
-  }
+const $=selector=>document.querySelector(selector);
+const form=$("#export-form"),exportButton=$("#export-button"),preset=$("#preset"),fps=$("#fps"),duration=$("#duration"),speed=$("#speed");
+const statusPill=$("#status-pill"),progressText=$("#progress-text"),progressValue=$("#progress-value"),progressBar=$("#progress-bar"),stepText=$("#step-text"),fileText=$("#file-text"),message=$("#message");
+const folderInput=$("#project-folder"),musicInput=$("#music-file");
+const presets={portrait:{width:1080,height:1920,label:"1080 × 1920"},landscape:{width:1920,height:1080,label:"1920 × 1080"},square:{width:1080,height:1080,label:"1080 × 1080"}};
+let workspaceId=null,musicPath="",pollingTimer=null,currentVideoUrl="";
+function setStatus(type,label){statusPill.className="status-pill "+type;statusPill.textContent=label;}
+function showMessage(text,type=""){message.textContent=text;message.className="message "+type;}
+function setProgress(value,label){const n=Math.max(0,Math.min(100,Math.round(Number(value)||0)));progressBar.style.width=n+"%";progressValue.textContent=n+"%";if(label)progressText.textContent=label;}
+function formatSeconds(value){const s=Math.max(0,Math.round(value));return s>=60?Math.floor(s/60)+"分"+(s%60?String(s%60)+"秒":""):s+"秒";}
+function updateEstimate(){$("#resolution-label").textContent=presets[preset.value].label;const base=Number(duration.value)||0,multiplier=Number(speed.value)||1;$("#actual-duration").textContent=formatSeconds(base/multiplier);}
+[preset,duration,speed].forEach(el=>el.addEventListener("change",updateEstimate));duration.addEventListener("input",updateEstimate);
+$("#choose-folder").addEventListener("click",()=>folderInput.click());
+$("#choose-music").addEventListener("click",()=>musicInput.click());
+async function upload(url,body){const response=await fetch(url,{method:"POST",body});const data=await response.json();if(!response.ok)throw new Error(data.error||"文件上传失败");return data;}
+folderInput.addEventListener("change",async()=>{
+ const files=[...folderInput.files];if(!files.length)return;
+ const rootName=files[0].webkitRelativePath.split("/")[0]||"项目文件夹";
+ $("#folder-name").textContent=rootName+"（"+files.length+" 个文件）";
+ $("#source-path").value="";
+ $("#choose-folder").disabled=true;showMessage("正在导入项目文件夹，文件较多时请稍候……");
+ try{const data=new FormData();files.forEach(file=>data.append("files",file,file.webkitRelativePath));const result=await upload("/api/upload-project",data);workspaceId=result.workspaceId;$("#folder-name").textContent=rootName+" · 导入完成（"+result.fileCount+" 个文件）";showMessage("项目导入成功，已识别 "+result.sourceName+"。");}
+ catch(error){workspaceId=null;showMessage(error.message,"error");}
+ finally{$("#choose-folder").disabled=false;}
 });
-
-updateResolution();
+musicInput.addEventListener("change",async()=>{
+ const file=musicInput.files[0];if(!file)return;
+ $("#music-name").textContent=file.name;$("#choose-music").disabled=true;showMessage("正在导入背景音乐……");
+ try{if(!workspaceId)throw new Error("请先选择并导入邀请函项目文件夹，再选择音乐。");const data=new FormData();data.append("music",file,file.name);const result=await upload("/api/upload-music/"+encodeURIComponent(workspaceId),data);musicPath=result.musicPath;$("#music-name").textContent=file.name+" · 已导入";showMessage("背景音乐已导入。");}
+ catch(error){musicPath="";showMessage(error.message,"error");}
+ finally{$("#choose-music").disabled=false;}
+});
+function showResult(result){
+ const panel=$("#result-panel"),video=$("#result-video"),download=$("#download-link"),open=$("#open-video");
+ const url=result.outputUrl+"?v="+Date.now();video.pause();video.src=url;video.load();download.href=result.outputUrl;download.download=result.outputName;download.textContent="下载 "+result.outputName;open.onclick=()=>window.open(result.outputUrl,"_blank","noopener");panel.hidden=false;
+}
+async function pollJob(jobId){
+ try{const response=await fetch("/api/jobs/"+encodeURIComponent(jobId));const result=await response.json();if(!response.ok)throw new Error(result.error||"无法获取任务状态");
+ setProgress(result.progress,result.message);stepText.textContent=result.stepLabel||"处理中";fileText.textContent=result.outputName||"生成中";
+ if(result.status==="completed"){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("success","导出完成");setProgress(100,"视频已生成");showMessage("导出成功。现在可以直接在下方播放、拖动进度或下载 MP4。","success");showResult(result);}
+ if(result.status==="failed"){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("error","导出失败");showMessage(result.error||"导出失败，请查看服务端终端日志。","error");}
+ }catch(error){clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;setStatus("error","连接中断");showMessage(error.message,"error");}
+}
+form.addEventListener("submit",async event=>{
+ event.preventDefault();if(pollingTimer)clearInterval(pollingTimer);
+ const presetConfig=presets[preset.value],baseDuration=Number(duration.value),multiplier=Number(speed.value),finalDuration=baseDuration/multiplier;
+ const sourcePath=$("#source-path").value.trim();
+ if(!workspaceId&&!sourcePath){showMessage("请先选择项目文件夹，或填写 HTML 文件完整路径。","error");return;}
+ if(!Number.isFinite(finalDuration)||finalDuration<5||finalDuration>300){showMessage("按当前播放速度计算，最终视频时长必须在 5～300 秒之间。","error");return;}
+ const payload={workspaceId,sourcePath,musicPath,duration:Number(finalDuration.toFixed(3)),fps:Number(fps.value),width:presetConfig.width,height:presetConfig.height,outputName:$("#output-name").value.trim()};
+ exportButton.disabled=true;$("#result-panel").hidden=true;setStatus("running","准备导出");setProgress(0,"正在提交任务");stepText.textContent="检查参数";fileText.textContent=payload.outputName;showMessage("正在连接本地导出服务……");
+ try{const response=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw new Error(result.error||"创建导出任务失败");setStatus("running","正在导出");showMessage("任务已启动。正在逐帧渲染，请保持服务运行。");pollingTimer=setInterval(()=>pollJob(result.jobId),700);await pollJob(result.jobId);}
+ catch(error){exportButton.disabled=false;setStatus("error","启动失败");showMessage(error.message,"error");}
+});
+updateEstimate();
