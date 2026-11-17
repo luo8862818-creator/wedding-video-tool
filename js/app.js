@@ -3,7 +3,7 @@ const form=$("#export-form"),exportButton=$("#export-button"),preset=$("#preset"
 const statusPill=$("#status-pill"),progressText=$("#progress-text"),progressValue=$("#progress-value"),progressBar=$("#progress-bar");
 const stepText=$("#step-text"),fileText=$("#file-text"),message=$("#message");
 const folderInput=$("#project-folder"),singleHtmlInput=$("#single-html-file"),musicInput=$("#music-file"),sourcePathInput=$("#source-path");
-const invitationPreview=$("#invitation-preview"),posterPreview=$("#poster-preview"),resultPanel=$("#result-panel");
+const invitationPreview=$("#invitation-preview"),previewViewport=$("#preview-viewport"),posterPreview=$("#poster-preview"),resultPanel=$("#result-panel");
 const previewStatus=$("#preview-status"),reloadPreviewButton=$("#reload-preview"),openPreviewButton=$("#open-preview");
 let previewUrl=null,previewBaseUrl=null;
 const presets={
@@ -25,16 +25,27 @@ function setPreviewStatus(label,state=""){
 }
 
 function updatePreviewPreset(){
- if(invitationPreview)invitationPreview.dataset.preset=preset.value;
+ if(!invitationPreview||!previewViewport)return;
+ const target=presets[preset.value];
+ const stage=previewViewport.parentElement;
+ const availableWidth=Math.max(180,Math.min((stage?.clientWidth||700)-52,560));
+ const availableHeight=Math.max(220,Math.min(window.innerHeight-230,620));
+ const scale=Math.min(1,availableWidth/target.width,availableHeight/target.height);
+ previewViewport.style.width=Math.round(target.width*scale)+"px";
+ previewViewport.style.height=Math.round(target.height*scale)+"px";
+ invitationPreview.style.width=target.width+"px";
+ invitationPreview.style.height=target.height+"px";
+ invitationPreview.style.transform="scale("+scale+")";
+ invitationPreview.style.transformOrigin="top left";
 }
 
 function hideLivePreview(){
  previewUrl=null;previewBaseUrl=null;
  if(invitationPreview){
   invitationPreview.dataset.previewUrl="";
-  invitationPreview.hidden=true;
   invitationPreview.src="about:blank";
  }
+ if(previewViewport)previewViewport.hidden=true;
  if(posterPreview)posterPreview.hidden=false;
  if(reloadPreviewButton)reloadPreviewButton.disabled=true;
  if(openPreviewButton)openPreviewButton.disabled=true;
@@ -45,7 +56,7 @@ function showLivePreview(){
  if(!workspaceId||!previewUrl||!invitationPreview)return false;
  resultPanel.hidden=true;
  posterPreview.hidden=true;
- invitationPreview.hidden=false;
+ previewViewport.hidden=false;
  updatePreviewPreset();
  return true;
 }
@@ -80,7 +91,7 @@ function loadWorkspacePreview(id,baseUrl){
  invitationPreview.onerror=()=>{
   if(invitationPreview.dataset.previewUrl===url)setPreviewStatus("预览加载失败","error");
  };
- invitationPreview.hidden=false;
+ previewViewport.hidden=false;
  posterPreview.hidden=true;
  resultPanel.hidden=true;
  if(reloadPreviewButton)reloadPreviewButton.disabled=true;
@@ -94,6 +105,7 @@ function refreshWorkspacePreview(){
  if(!workspaceId||!previewBaseUrl)return;
  loadWorkspacePreview(workspaceId,previewBaseUrl);
 }
+window.addEventListener("resize",updatePreviewPreset);
 
 reloadPreviewButton?.addEventListener("click",()=>{
  if(showLivePreview())refreshWorkspacePreview();
@@ -375,7 +387,7 @@ musicInput.addEventListener("change",async()=>{
 function showResult(result){
  const panel=$("#result-panel"),video=$("#result-video"),download=$("#download-link"),open=$("#open-video");
  posterPreview.hidden=true;
- invitationPreview.hidden=true;
+ previewViewport.hidden=true;
  setPreviewStatus("成片已生成","ready");
  const url=result.outputUrl+"?v="+Date.now();
  video.pause();video.src=url;video.load();
@@ -440,7 +452,7 @@ form.addEventListener("submit",async event=>{
  exportButton.disabled=true;
  resultPanel.hidden=true;
  if(!showLivePreview()){
-  invitationPreview.hidden=true;
+  previewViewport.hidden=true;
   posterPreview.hidden=false;
  }
  setStatus("running","准备录制");setProgress(0,"正在启动浏览器");
