@@ -566,6 +566,7 @@ async function renderVideo(options){
     endReason:"player.totalMs 时间轴完成",
     durationSeconds:encoded.durationSeconds,
     captureSeconds:Number(captureSeconds.toFixed(2)),
+    renderThroughputFps:Number((expectedFrames/(captureSeconds||1)).toFixed(2)),
     detectedDelaySeconds:0,
     frames:encoded.frames,
     expectedFrames,
@@ -770,6 +771,7 @@ async function renderVideo(options){
    selectedFrameUrl:latestState.frameUrl,
    playerKey:latestState.playerKey,
    playerState:latestState.playerState,
+   animationFrameStats:latestState.animationFrameStats||{},
    pageErrors:pageErrors.map(item=>item.message)
   };
   logger.info("导出指标",metrics);
