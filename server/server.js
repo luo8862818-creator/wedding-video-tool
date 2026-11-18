@@ -302,7 +302,7 @@ app.post("/api/jobs/:id/cancel",(req,res)=>{
 app.get("/api/jobs/:id",(req,res)=>{
  const job=jobs.get(req.params.id);
  if(!job)return fail(res,404,"任务不存在或服务已重启。");
- const elapsedMs=job.status==="running"?Date.now()-job.startedAtMs:(job.elapsedMs||0);
+ const elapsedMs=job.status==="running"||job.status==="cancelling"?Date.now()-job.startedAtMs:(job.elapsedMs||0);
  res.json({...job,elapsedMs,elapsedSeconds:Number((elapsedMs/1000).toFixed(1))});
 });
 app.get("/api/output/:name",(req,res)=>{
