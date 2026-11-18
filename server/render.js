@@ -621,13 +621,12 @@ async function renderVideo(options){
    const encoded=await transcodeFrameStream({
     frames:frameStream,outputPath,musicPath,fps,width,height,
     expectedFrames,durationHint,logger,signal,
+    onCommitted:()=>onProgress(99,"完成校验","MP4 已完成编码与完整解码校验"),
     onProgress:(ratio,message)=>{if(renderedFrames<expectedFrames)return;onProgress(82+ratio*16,"转换 MP4",message,{
      renderedFrames:expectedFrames,encodedDurationSeconds:Number((ratio*durationHint).toFixed(2))
     });}
    });
-   throwIfAborted(signal);
-  onProgress(99,"完成校验","MP4 已完成编码与完整解码校验");
-  const captureSeconds=(Date.now()-offlineCaptureStartedAt)/1000;
+   const captureSeconds=(Date.now()-offlineCaptureStartedAt)/1000;
    const taskSeconds=(Date.now()-taskStartedAt)/1000;
    const finalState=await readPlaybackState(page);
    const metrics={
@@ -821,13 +820,12 @@ async function renderVideo(options){
   const encoded=await transcodeRecordedVideo({
    inputPath:recordedPath,outputPath,musicPath,fps,width,height,
    durationHint:captureSeconds,logger,copyVideo:true,signal,
+   onCommitted:()=>onProgress(99,"完成校验","MP4 已完成编码与完整解码校验"),
    onProgress:state=>{
     const ratio=captureSeconds>0?Math.min(1,state.outTimeSeconds/captureSeconds):0;
     onProgress(82+ratio*16,"封装 MP4","已封装 "+state.outTimeSeconds.toFixed(1)+" 秒",{recordingSeconds:Number(captureSeconds.toFixed(2)),encodedFrames:state.frame});
    }
   });
-  throwIfAborted(signal);
-  onProgress(99,"完成校验","MP4 已完成编码与完整解码校验");
   const taskSeconds=(Date.now()-taskStartedAt)/1000;
   const metrics={
    mode:"native-screencast-h264",
