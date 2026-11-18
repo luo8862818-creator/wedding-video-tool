@@ -4,6 +4,15 @@ const {spawn}=require("node:child_process");
 const {performance}=require("node:perf_hooks");
 const config=require("../config/video.config");
 
+function makeAbortError(signal){
+ const error=new Error(signal?.reason?.message||"导出任务已停止。");
+ error.name="AbortError";error.code="ABORT_ERR";
+ return error;
+}
+function throwIfAborted(signal){
+ if(signal?.aborted)throw makeAbortError(signal);
+}
+
 // Consume native screencast JPEGs. No screenshot(), DOM clock control or PNG round-trip.
 // Timestamp resampling preserves wall-clock pauses; CFR must not speed up sparse input.
 class CaptureQueue{
@@ -55,24 +64,56 @@ class CaptureQueue{
  }
 }
 
-async function probeEncoder(binary,profile,{width,height,fps,directory,sample}){
+async function probeEncoder(binary,profile,{width,height,fps,directory,sample,signal}){
  const output=path.join(directory,"probe-"+profile.name+".mp4");
- try{return await new Promise(resolve=>{
+ try{return await new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(makeAbortError(signal));return;}
   const input=sample?["-threads","2","-probesize","32","-analyzeduration","0","-fpsprobesize","0","-f","image2pipe","-framerate",String(fps),"-vcodec","mjpeg","-i","pipe:0"]:["-f","lavfi","-i",`testsrc2=size=${width}x${height}:rate=${fps}`];
   const child=spawn(profile.binary||binary,["-y","-v","error",...input,"-frames:v","30","-an",...profile.args,output],{windowsHide:true,stdio:[sample?"pipe":"ignore","ignore","ignore"]});
+  let settled=false;
+  const finish=(error,value)=>{
+   if(settled)return;settled=true;clearTimeout(timer);
+   signal?.removeEventListener("abort",abortHandler);
+   if(error)reject(error);else resolve(value);
+  };
   const timer=setTimeout(()=>child.kill(),5000);
+  const abortHandler=()=>{
+   if(!child.killed)child.kill();
+   finish(makeAbortError(signal));
+  };
+  signal?.addEventListener("abort",abortHandler,{once:true});
+  if(signal?.aborted){abortHandler();return;}
   if(sample){child.stdin.on("error",()=>{});child.stdin.end(Buffer.concat(Array(30).fill(sample)));}
-  child.once("error",()=>{clearTimeout(timer);resolve(false);});
-  child.once("close",code=>{clearTimeout(timer);resolve(code===0&&fs.existsSync(output)&&fs.statSync(output).size>1000);});
+  child.once("error",()=>finish(signal?.aborted?makeAbortError(signal):null,false));
+  child.once("close",code=>finish(signal?.aborted?makeAbortError(signal):null,
+   code===0&&fs.existsSync(output)&&fs.statSync(output).size>1000));
  });}finally{try{fs.rmSync(output,{force:true});}catch(_){}}
 }
-async function makeProbeImage(binary,{width,height}){
- return new Promise(resolve=>{
+async function makeProbeImage(binary,{width,height,signal}){
+ return new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(makeAbortError(signal));return;}
   const chunks=[];const child=spawn(binary,["-v","error","-f","lavfi","-i",`testsrc2=size=${width}x${height}`,"-frames:v","1","-c:v","mjpeg","-q:v","3","-threads","2","-f","image2pipe","pipe:1"],{windowsHide:true,stdio:["ignore","pipe","ignore"]});
-  const timer=setTimeout(()=>child.kill(),5000);child.stdout.on("data",data=>chunks.push(data));child.on("error",()=>{clearTimeout(timer);resolve(null)});child.on("close",code=>{clearTimeout(timer);resolve(code===0?Buffer.concat(chunks):null)});
+  let settled=false;
+  const finish=(error,value)=>{
+   if(settled)return;settled=true;clearTimeout(timer);
+   signal?.removeEventListener("abort",abortHandler);
+   if(error)reject(error);else resolve(value);
+  };
+  const timer=setTimeout(()=>child.kill(),5000);
+  const abortHandler=()=>{
+   if(!child.killed)child.kill();
+   finish(makeAbortError(signal));
+  };
+  signal?.addEventListener("abort",abortHandler,{once:true});
+  if(signal?.aborted){abortHandler();return;}
+  child.stdout.on("data",data=>chunks.push(data));
+  child.on("error",()=>finish(signal?.aborted?makeAbortError(signal):null,null));
+  child.on("close",code=>finish(signal?.aborted?makeAbortError(signal):null,code===0?Buffer.concat(chunks):null));
  });
 }
 async function selectEncoder(binary,options){
+ const {signal}=options;
+ throwIfAborted(signal);
  const fallback=process.env.FFMPEG_SOFTWARE_PATH||require("ffmpeg-static");
  const software={name:"libx264",kind:"software",binary:fs.existsSync(fallback||"")?fallback:binary,args:["-c:v","libx264","-preset",config.preset||"veryfast","-crf",String(config.crf??18),"-threads",String(config.threads||2),"-pix_fmt","yuv420p"]};
  const hardware=[
@@ -84,7 +125,9 @@ async function selectEncoder(binary,options){
  if(!["auto","software",...hardware.map(p=>p.name)].includes(requested))throw Error("未知的 WEDDING_ENCODER："+requested);
  const candidates=requested==="software"?[software]:requested==="auto"?[software,...hardware]:[...hardware.filter(p=>p.name===requested),software];
  const sample=await makeProbeImage(binary,options),probes=[],valid=[];
+ throwIfAborted(signal);
  for(const profile of candidates){
+  throwIfAborted(signal);
   const started=performance.now(),ok=await probeEncoder(binary,profile,{...options,sample});
   const elapsedMs=Math.round(performance.now()-started);probes.push({name:profile.name,kind:profile.kind,ok,elapsedMs});
   if(ok)valid.push({...profile,benchmarkMs:elapsedMs});
