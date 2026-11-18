@@ -152,8 +152,7 @@ function finishExportControls(){
   stopExportButton.disabled=true;
   stopExportButton.textContent="停止导出";
  }
- const clearButton=$("#clear-history");
- if(clearButton)clearButton.disabled=false;
+ loadHistory();
 }
 function escapeHtml(value){
  return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
@@ -490,10 +489,12 @@ async function pollJob(jobId){
    finishExportControls();
    setStatus("idle","已停止");setProgress(0,"导出已停止");
    stepText.textContent="已停止";fileText.textContent="未完成";
-   if(!showLivePreview())posterPreview.hidden=false;
-   setPreviewStatus(previewUrl?"实时预览已恢复":"等待导入",previewUrl?"ready":"");
+   const previewRestored=showLivePreview();
+   if(!previewRestored)posterPreview.hidden=false;
+   reloadPreviewButton.disabled=!previewRestored;
+   openPreviewButton.disabled=!previewRestored;
+   setPreviewStatus(previewRestored?"实时预览已恢复":"等待导入",previewRestored?"ready":"");
    showMessage("已停止导出。浏览器和 FFmpeg 已关闭，临时录制文件已清理；项目素材保留，可以重新选择文件夹或再次导出。","success");
-   loadHistory();
   }
   if(result.status==="completed"){
    reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;
@@ -506,7 +507,7 @@ async function pollJob(jobId){
    const captureStats=result.metrics?.captureStats;
    const qualityInfo=captureStats?(" 编码器："+result.metrics.encoder+"；源画面采集约 "+captureStats.sourceFps+" FPS；队列丢帧 "+captureStats.droppedSourceFrames+"。源帧率包含停顿与静止画面，输出 FPS 不单独代表流畅度。 "):"";
    showMessage("导出成功。"+captureInfo+qualityInfo+"可以播放或下载 MP4。","success");
-   showResult(result);loadHistory();
+   showResult(result);
   }
   if(result.status==="failed"){
    reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;
@@ -514,7 +515,6 @@ async function pollJob(jobId){
    setStatus("error","导出失败");
    if(!showLivePreview())posterPreview.hidden=false;
    showMessage(result.error||"导出失败。请下载本次诊断日志排查原因。","error");
-   loadHistory();
   }
  }catch(error){
   finishExportControls();
