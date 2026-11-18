@@ -3,6 +3,7 @@ const os=require("node:os");
 const path=require("node:path");
 const express=require("express");
 const http=require("node:http");
+const {performance}=require("node:perf_hooks");
 const {chromium}=require("playwright");
 const {transcodeRecordedVideo,transcodeFrameStream,encodeLiveFrames,ffmpegPath}=require("./ffmpeg");
 const {CaptureQueue,selectEncoder}=require("./live-capture");
@@ -365,14 +366,18 @@ async function findDeterministicPlayerFrame(page,timeoutMs=20000){
  return null;
 }
 
-async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress,signal}){
+async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress,signal,renderFrame,onFrame=()=>{}}){
  const progressInterval=Math.max(1,Math.round(fps));
  const session=await page.context().newCDPSession(page);
  try{
  for(let index=0;index<frameCount;index++){
   throwIfAborted(signal);
+  const frameStarted=performance.now();let frameState;
   const timeMs=index*1000/fps;
-  await frame.evaluate(async(ms)=>{
+  if(renderFrame){
+   frameState=await renderFrame(timeMs);
+  }else{
+   await frame.evaluate(async(ms)=>{
    const player=[window.weddingPlayer,window.templatePlayer,window.invitationPlayer].find(p=>p&&typeof p.renderAt==="function"&&typeof p.renderCapture==="function"&&p.ready);
    if(!player||typeof player.renderAt!=="function"||typeof player.renderCapture!=="function"){
     throw new Error("邀请函逐帧渲染接口在导出过程中丢失。");
@@ -388,9 +393,11 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
    document.documentElement.getBoundingClientRect();
   });
+  }
   // Lossless PNG; skip compression work without changing the pixels.
   const shot=await session.send("Page.captureScreenshot",{format:"png",captureBeyondViewport:false,optimizeForSpeed:true});
   const image=Buffer.from(shot.data,"base64");
+  onFrame({buffer:image,index,timeMs,state:frameState,elapsedMs:performance.now()-frameStarted});
   if(index%progressInterval===0||index===frameCount-1){
    const progress=6+((index+1)/frameCount)*72;
    onProgress(progress,"逐帧渲染邀请函",
@@ -403,6 +410,10 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
 }
 
 async function renderVideo(options){
+ const selectedMode=options.captureMode||process.env.WEDDING_CAPTURE_MODE||"auto";
+ if(!["auto","deterministic","live"].includes(selectedMode))throw new Error("未知的导出模式："+selectedMode);
+ // Real-time capture remains an explicit legacy option, never a fallback.
+ if(selectedMode!=="live")return require('./offline-render').renderOfflineVideo(options);
  const {sourcePath,musicPath,outputPath,fps,width,height,onProgress=()=>{}}=options;
  const signal=options.signal;
  const logger=options.logger||{info:()=>{},warn:()=>{},error:()=>{},write:()=>{}};
@@ -880,5 +891,5 @@ async function renderVideo(options){
  }
 }
 
-module.exports={renderVideo,readPlaybackState,resolveCaptureProfile,findDeterministicCaptureScript};
+module.exports={renderVideo,readPlaybackState,resolveCaptureProfile,findDeterministicCaptureScript,createDeterministicFrameStream};
 

@@ -1,64 +1,9 @@
-const path=require("node:path");
-const express=require("express");
-const http=require("node:http");
-const {chromium}=require("playwright");
+const {renderOfflineVideo}=require('./offline-render');
 
-async function analyzePage({sourcePath,onProgress=()=>{},maxSeconds=300,tailSeconds=2.5}){
- let browser=null,context=null,server=null;
- const started=Date.now();
- try{
-  onProgress(2,"启动分析浏览器","准备模拟网页播放");
-  browser=await chromium.launch({headless:true,args:["--disable-background-timer-throttling","--disable-renderer-backgrounding","--disable-backgrounding-occluded-windows"]});
-  context=await browser.newContext({viewport:{width:450,height:800},deviceScaleFactor:1,colorScheme:"light",reducedMotion:"no-preference"});
-  const page=await context.newPage();
-  const app=express();app.use(express.static(path.dirname(sourcePath),{dotfiles:"allow",fallthrough:false}));
-  server=http.createServer(app);
-  await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve);});
-  const address=server.address();
-  const url="http://127.0.0.1:"+address.port+"/"+encodeURIComponent(path.basename(sourcePath));
-  onProgress(5,"加载网页","等待 HTML、字体和图片加载");
-  await page.goto(url,{waitUntil:"load",timeout:60000});
-  const info=await page.evaluate(async()=>{
-   if(document.fonts?.ready)await document.fonts.ready;
-   await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));
-   const p=window.weddingPlayer,root=document.scrollingElement||document.documentElement;
-   return {timeline:Boolean(p&&typeof p.renderAt==="function"&&Number(p.totalMs)>0),totalMs:Number(p?.totalMs)||0,scrollHeight:root.scrollHeight,viewportHeight:innerHeight,maxScroll:Math.max(0,root.scrollHeight-innerHeight),scriptErrors:p?.errors||[]};
-  });
-  if(info.scriptErrors.length)throw new Error("网页脚本报告错误："+info.scriptErrors.join("；"));
-  if(info.timeline){
-   const seconds=info.totalMs/1000;
-   return {mode:"timeline",playbackSeconds:Number(seconds.toFixed(2)),tailSeconds:0,videoSeconds:Number(seconds.toFixed(2)),details:"读取 weddingPlayer.totalMs 时间轴时长",analysisMs:Date.now()-started};
-  }
-  // 使用真实浏览器时钟运行页面，不接管定时器、requestAnimationFrame 或滚动行为。
-  // 这样测得的时长就是网页实际播放时长，而不是模拟时间。
-  const playbackStartedAt=Date.now();
-  let elapsedMs=0,lastY=null,startedMoving=false,bottomStableMs=0,noMovementMs=0;
-  const tickMs=100,tailMs=Math.round(tailSeconds*1000);
-  while(elapsedMs<maxSeconds*1000){
-   await page.waitForTimeout(tickMs);elapsedMs=Date.now()-playbackStartedAt;
-   const state=await page.evaluate(()=>{
-    const root=document.scrollingElement||document.documentElement;
-    return {y:window.scrollY,maxScroll:Math.max(0,root.scrollHeight-innerHeight),height:root.scrollHeight,ready:document.readyState};
-   });
-   if(lastY===null)lastY=state.y;
-   const delta=Math.abs(state.y-lastY);
-   if(delta>=1){startedMoving=true;noMovementMs=0;bottomStableMs=0;}
-   else{noMovementMs+=tickMs;if(startedMoving&&state.y>=state.maxScroll-2)bottomStableMs+=tickMs;}
-   lastY=state.y;
-   if(!startedMoving&&noMovementMs>=15000)throw new Error("等待 15 秒仍未检测到自动滚动。该网页可能需要点击启动，或使用 CSS transform/自定义时间轴。请切换手动时长。");
-   if(startedMoving&&state.maxScroll>0&&state.y>=state.maxScroll-2&&bottomStableMs>=tailMs){
-    const playbackSeconds=elapsedMs/1000;
-    return {mode:"auto-scroll",playbackSeconds:Number(playbackSeconds.toFixed(2)),tailSeconds:Number((bottomStableMs/1000).toFixed(2)),videoSeconds:Number(playbackSeconds.toFixed(2)),details:"检测到页面自动滚动到底部，并保持稳定 "+(bottomStableMs/1000).toFixed(1)+" 秒",maxScroll:state.maxScroll,analysisMs:Date.now()-started};
-   }
-   if(elapsedMs%1000===0)onProgress(Math.min(90,5+elapsedMs/(maxSeconds*1000)*85),"模拟网页播放","已分析 "+(elapsedMs/1000).toFixed(1)+" 秒；滚动位置 "+Math.round(state.y)+"/"+Math.round(state.maxScroll));
-  }
-  const finalState=await page.evaluate(()=>{const root=document.scrollingElement||document.documentElement;return {y:window.scrollY,maxScroll:Math.max(0,root.scrollHeight-innerHeight),height:root.scrollHeight};});
-  if(!startedMoving)throw new Error("没有检测到自动滚动或可读取的时间轴。该网页可能需要点击开始，或使用 CSS transform/自定义动画。请切换手动时长，或为网页提供明确的播放结束标志。");
-  throw new Error("已检测到网页滚动，但在 "+maxSeconds+" 秒内没有到达底部。当前位置 "+Math.round(finalState.y)+"/"+Math.round(finalState.maxScroll)+"。请检查网页是否循环播放，或改用手动时长。");
- }finally{
-  if(context)await context.close().catch(()=>{});
-  if(browser)await browser.close().catch(()=>{});
-  if(server)await new Promise(resolve=>server.close(()=>resolve())).catch(()=>{});
- }
+// Analysis shares the export driver's resource/animation checks. It must not
+// estimate duration by recording wall-clock playback and then silently switch
+// the actual export to a different timing model.
+async function analyzePage(options){
+ return renderOfflineVideo({...options,analyzeOnly:true});
 }
 module.exports={analyzePage};

@@ -213,7 +213,7 @@ app.post("/api/export",async(req,res)=>{
  const logPath=path.join(LOG_DIR,jobId+".log");
  const logger=createFileLogger(logPath);
  const job={
-  id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备真实网页录制",
+  id:jobId,status:"running",progress:0,stepLabel:"启动浏览器",message:"正在准备离线逐帧导出",
   outputName:finalName,outputUrl:"/api/output/"+encodeURIComponent(finalName),
   logUrl:"/api/logs/"+jobId,
   error:null,startedAt,startedAtMs:Date.now(),duration:null,playbackRate:1,

@@ -18,6 +18,9 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
   const hasInputFrames=inputFrames!==null;
   const child=spawn(binary,args,{windowsHide:true,stdio:[hasInputFrames?"pipe":"ignore","ignore","pipe"]});
   let stderr="",pending="",frame=0,outTimeUs=0,settled=false,lastProgressLogAt=0,inputError=null;
+  let inputTask=Promise.resolve();
+  let inputFinished=!hasInputFrames;
+  const inputStats={inputFrames:0,maxBufferedBytes:0,backpressureWaits:0};
   let abortHandler=null;
   const cleanupAbort=()=>{if(signal&&abortHandler)signal.removeEventListener("abort",abortHandler);};
   abortHandler=()=>{
@@ -50,11 +53,15 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
   });
   if(hasInputFrames){
    child.stdin.on("error",error=>{inputError=inputError||error;});
-   (async()=>{
+   inputTask=(async()=>{
     try{
      for await(const buffer of inputFrames){
+      if(child.stdin.destroyed)throw inputError||new Error("FFmpeg 输入管道已关闭");
       if(!Buffer.isBuffer(buffer))throw new Error("逐帧采集器必须输出 Buffer 图片数据。");
-      if(!child.stdin.write(buffer)){
+      const writable=child.stdin.write(buffer);inputStats.inputFrames++;
+      inputStats.maxBufferedBytes=Math.max(inputStats.maxBufferedBytes,child.stdin.writableLength);
+      if(!writable){
+       inputStats.backpressureWaits++;
        await new Promise((resolveDrain,rejectDrain)=>{
         const cleanup=()=>{
          child.stdin.removeListener("drain",onDrain);
@@ -70,6 +77,7 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
        });
       }
      }
+     inputFinished=true;
      if(!child.stdin.destroyed)child.stdin.end();
     }catch(error){
      inputError=inputError||error;
@@ -82,7 +90,13 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
    if(settled)return;settled=true;cleanupAbort();
    reject(signal?.aborted?makeAbortError(signal):new Error("无法启动 FFmpeg："+error.message));
   });
-  child.once("close",code=>{
+  child.once("close",async code=>{
+   if(!inputFinished){
+    inputError=inputError||new Error("FFmpeg 在输入流完成前退出（退出码 "+code+"）");
+    // Wake legacy queues, or cancel the currently rendering offline frame.
+    try{inputFrames?.stop?.();}catch(_){}
+   }
+   await inputTask;
    if(settled)return;settled=true;cleanupAbort();
    if(signal?.aborted){
     reject(makeAbortError(signal));
@@ -91,7 +105,7 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
     reject(inputError);
    }else if(code===0){
     logger?.info(phase+"完成",{frame,outTimeSeconds:outTimeUs/1000000});
-    resolve({frame,outTimeSeconds:outTimeUs/1000000,stderr});
+    resolve({frame,outTimeSeconds:outTimeUs/1000000,stderr,inputStats});
    }else{
     logger?.error(phase+"失败",{exitCode:code,stderr:stderr.slice(-5000)});
     reject(new Error("FFmpeg 处理失败（退出码 "+code+"）。"+stderr.slice(-5000)));
@@ -100,7 +114,7 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
  });
 }
 
-async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,height,expectedFrames,durationHint,onProgress=()=>{},onCommitted=()=>{},logger,signal}){
+async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,height,expectedFrames,durationHint,onProgress=()=>{},onCommitted=()=>{},onEncodingTiming=()=>{},validateBeforeCommit=()=>{},logger,signal}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!frames||typeof frames[Symbol.asyncIterator]!=="function")throw new Error("逐帧图片输入流无效。");
  if(!Number.isFinite(fps)||fps<1)throw new Error("逐帧编码帧率无效。");
@@ -122,12 +136,13 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  args.push("-map","0:v:0");
  if(musicPath)args.push("-map","1:a:0");
  args.push("-vf",filter,"-c:v","libx264","-preset","veryfast","-threads","2","-crf","18","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","passthrough");
- if(musicPath)args.push("-c:a","aac","-b:a","192k","-t",String(durationHint));
+ if(musicPath)args.push("-af","asetpts=PTS-STARTPTS","-c:a","aac","-b:a","192k","-t",String(durationHint));
  else args.push("-an");
  args.push("-movflags","+faststart","-progress","pipe:2",partialPath);
 
  try{
   onProgress(0,"开始逐帧编码");
+  const encodingStarted=performance.now();
   const converted=await runFfmpeg(args,{
    logger,phase:"逐帧 MP4 视频编码",inputFrames:frames,signal,
    onProgress:state=>{
@@ -135,10 +150,11 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
     onProgress(ratio,"正在编码逐帧 MP4 · "+state.frame+" 帧");
    }
   });
+  onEncodingTiming(performance.now()-encodingStarted);
   if(!fs.existsSync(partialPath)||fs.statSync(partialPath).size<1024)throw new Error("FFmpeg 未生成有效 MP4 文件。");
 
   const checked=await runFfmpeg([
-   "-hide_banner","-loglevel","error","-i",partialPath,
+   "-hide_banner","-loglevel","error","-xerror","-err_detect","explode","-i",partialPath,
    "-map","0:v:0","-progress","pipe:2","-f","null","-"
   ],{logger,phase:"MP4 完整解码校验",signal});
   if(!checked.frame)throw new Error("MP4 校验失败：没有检测到有效视频帧。");
@@ -148,6 +164,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
   const size=fs.statSync(partialPath).size;
   // Decoder progress may report the last frame PTS, which excludes its duration.
   const durationSeconds=Number((checked.frame/fps).toFixed(3));
+  await validateBeforeCommit();
   throwIfAborted(signal);
   const backupPath=outputPath+".previous-"+process.pid+"-"+Date.now();
   const hadPrevious=fs.existsSync(outputPath);
@@ -169,7 +186,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
   onCommitted({frames:checked.frame,durationSeconds,size});
   return {
    frames:checked.frame,durationSeconds,size,encodedFrames:converted.frame,
-   expectedFrames,avgFps:Number((checked.frame/(durationSeconds||1)).toFixed(2))
+   expectedFrames,avgFps:Number((checked.frame/(durationSeconds||1)).toFixed(2)),inputStats:converted.inputStats
   };
  }catch(error){
   fs.rmSync(partialPath,{force:true});
