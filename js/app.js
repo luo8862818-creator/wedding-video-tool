@@ -1,5 +1,5 @@
 const $=selector=>document.querySelector(selector);
-const form=$("#export-form"),exportButton=$("#export-button"),preset=$("#preset"),fps=$("#fps");
+const form=$("#export-form"),exportButton=$("#export-button"),stopExportButton=$("#stop-export-button"),preset=$("#preset"),fps=$("#fps");
 const statusPill=$("#status-pill"),progressText=$("#progress-text"),progressValue=$("#progress-value"),progressBar=$("#progress-bar");
 const stepText=$("#step-text"),fileText=$("#file-text"),message=$("#message");
 const folderInput=$("#project-folder"),singleHtmlInput=$("#single-html-file"),musicInput=$("#music-file"),sourcePathInput=$("#source-path");
@@ -11,7 +11,7 @@ const presets={
  landscape:{width:1920,height:1080,label:"1920 × 1080"},
  square:{width:1080,height:1080,label:"1080 × 1080"}
 };
-let workspaceId=null,pollingTimer=null,isImporting=false;
+let workspaceId=null,pollingTimer=null,isImporting=false,activeJobId=null,isStopping=false,isExporting=false;
 
 function setWorkspaceName(name){
  const element=$("#workspace-name");
@@ -143,6 +143,18 @@ function formatElapsed(ms){
  const h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;
  return h?String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"):String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
 }
+function finishExportControls(){
+ if(pollingTimer){clearInterval(pollingTimer);pollingTimer=null;}
+ activeJobId=null;isStopping=false;isExporting=false;
+ exportButton.disabled=false;
+ if(stopExportButton){
+  stopExportButton.hidden=true;
+  stopExportButton.disabled=true;
+  stopExportButton.textContent="停止导出";
+ }
+ const clearButton=$("#clear-history");
+ if(clearButton)clearButton.disabled=false;
+}
 function escapeHtml(value){
  return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 }
@@ -182,29 +194,65 @@ function clearProjectLabels(){
 }
 
 async function loadHistory(){
- const list=$("#history-list");
+ const list=$("#history-list"),clearButton=$("#clear-history");
  if(!list)return;
  try{
   const data=await requestJson("/api/history");
-  if(!data.items?.length){
+  const items=Array.isArray(data.items)?data.items:[];
+  if(clearButton)clearButton.disabled=!items.length||isExporting;
+  if(!items.length){
    list.innerHTML='<span class="history-empty">暂无导出记录，完成第一次导出后会自动记录。</span>';
    return;
   }
-  list.innerHTML=data.items.slice(0,10).map(item=>{
+  list.innerHTML=items.slice(0,10).map(item=>{
    const date=item.startedAt?new Date(item.startedAt).toLocaleString():"时间未知";
-   const status=item.status==="completed"?"成功":"失败";
+   const status=item.status==="completed"?"成功":item.status==="cancelled"?"已停止":"失败";
+   const statusClass=item.status==="completed"?"done":item.status==="cancelled"?"cancelled":"failed";
    const dimensions=item.width&&item.height?item.width+" × "+item.height:"尺寸未知";
    const capture=item.metrics?.captureWidth&&item.metrics?.captureHeight
     ?("采集 "+item.metrics.captureWidth+" × "+item.metrics.captureHeight+(item.metrics.nativeResolution?" · 原生采集":" · 缩放采集"))
     :"";
    const details=[dimensions,capture,(item.fps||"-")+" FPS",formatSeconds(item.duration),item.frameCount?item.frameCount+" 帧":"帧数未知"].filter(Boolean).join(" · ");
-   return '<article class="history-item"><div class="history-top"><strong>'+escapeHtml(item.outputName||"未命名视频")+'</strong><span class="history-status '+(item.status==="completed"?"done":"failed")+'">'+status+'</span></div><div class="history-meta">'+escapeHtml(date)+' · 导出耗时 <b>'+formatElapsed(item.elapsedMs)+'</b></div><div class="history-meta">'+escapeHtml(details)+' · 输出帧率 '+escapeHtml(item.avgFps||"-")+'</div>'+(item.error?'<div class="history-error">'+escapeHtml(item.error)+'</div>':"")+(item.logUrl?'<a class="history-log-link" href="'+escapeHtml(item.logUrl)+'" download>下载诊断日志</a>':"")+'</article>';
+   const deleteButton=item.id
+    ?'<button class="history-delete-button" type="button" data-history-id="'+escapeHtml(item.id)+'">删除</button>'
+    :"";
+   return '<article class="history-item"><div class="history-top"><strong>'+escapeHtml(item.outputName||"未命名视频")+'</strong><div class="history-item-actions"><span class="history-status '+statusClass+'">'+status+'</span>'+deleteButton+'</div></div><div class="history-meta">'+escapeHtml(date)+' · 导出耗时 <b>'+formatElapsed(item.elapsedMs)+'</b></div><div class="history-meta">'+escapeHtml(details)+' · 输出帧率 '+escapeHtml(item.avgFps||"-")+'</div>'+(item.error?'<div class="history-error">'+escapeHtml(item.error)+'</div>':"")+(item.logUrl?'<a class="history-log-link" href="'+escapeHtml(item.logUrl)+'" download>下载诊断日志</a>':"")+'</article>';
   }).join("");
  }catch(error){
+  if(clearButton)clearButton.disabled=true;
   list.innerHTML='<span class="history-empty">读取历史记录失败：'+escapeHtml(error.message)+'</span>';
  }
 }
 $("#refresh-history")?.addEventListener("click",loadHistory);
+$("#history-list")?.addEventListener("click",async event=>{
+ const button=event.target.closest(".history-delete-button");
+ if(!button)return;
+ const id=button.dataset.historyId;
+ if(!id||!window.confirm("确定删除这条导出记录及其诊断日志吗？MP4 视频文件不会删除。"))return;
+ button.disabled=true;
+ try{
+  await requestJson("/api/history/"+encodeURIComponent(id),{method:"DELETE"});
+  await loadHistory();
+  showMessage("历史记录及对应诊断日志已删除，MP4 成片保留。","success");
+ }catch(error){
+  button.disabled=false;
+  showMessage("删除历史记录失败："+error.message,"error");
+ }
+});
+$("#clear-history")?.addEventListener("click",async()=>{
+ const button=$("#clear-history");
+ if(!button||isExporting)return;
+ if(!window.confirm("确定清空全部导出历史记录和对应诊断日志吗？output 目录中的 MP4 视频不会删除。"))return;
+ button.disabled=true;
+ try{
+  const result=await requestJson("/api/history",{method:"DELETE"});
+  await loadHistory();
+  showMessage("已清理 "+(result.deletedCount||0)+" 条历史记录和 "+(result.deletedLogs||0)+" 个诊断日志，MP4 成片保留。","success");
+ }catch(error){
+  button.disabled=false;
+  showMessage("清空历史记录失败："+error.message,"error");
+ }
+});
 
 preset.addEventListener("change",()=>{
  $("#resolution-label").textContent=presets[preset.value].label;
@@ -397,6 +445,24 @@ function showResult(result){
  panel.hidden=false;
 }
 
+stopExportButton?.addEventListener("click",async()=>{
+ if(!activeJobId||isStopping)return;
+ isStopping=true;
+ stopExportButton.disabled=true;
+ stopExportButton.textContent="正在停止…";
+ setStatus("cancelling","正在停止");
+ showMessage("正在停止导出，正在关闭浏览器和 FFmpeg。请稍候……");
+ try{
+  await requestJson("/api/jobs/"+encodeURIComponent(activeJobId)+"/cancel",{method:"POST"});
+ }catch(error){
+  isStopping=false;
+  stopExportButton.disabled=false;
+  stopExportButton.textContent="重试停止";
+  showMessage("停止请求未完成："+error.message,"error");
+  if(activeJobId)await pollJob(activeJobId);
+ }
+});
+
 async function pollJob(jobId){
  try{
   const response=await fetch("/api/jobs/"+encodeURIComponent(jobId));
@@ -414,9 +480,24 @@ async function pollJob(jobId){
   $("#elapsed-text").textContent=formatElapsed(result.elapsedMs);
   if(result.duration!==null&&result.duration!==undefined)$("#video-duration").textContent=formatSeconds(result.duration);
   else if(result.metrics?.recordingSeconds)$("#video-duration").textContent="录制中 · "+formatSeconds(result.metrics.recordingSeconds);
+  if(result.status==="cancelling"){
+   setStatus("cancelling","正在停止");
+   if(stopExportButton){stopExportButton.disabled=true;stopExportButton.textContent="正在停止…";}
+   showMessage(result.message||"正在停止导出并清理临时资源。");
+   return;
+  }
+  if(result.status==="cancelled"){
+   finishExportControls();
+   setStatus("idle","已停止");setProgress(0,"导出已停止");
+   stepText.textContent="已停止";fileText.textContent="未完成";
+   if(!showLivePreview())posterPreview.hidden=false;
+   setPreviewStatus(previewUrl?"实时预览已恢复":"等待导入",previewUrl?"ready":"");
+   showMessage("已停止导出。浏览器和 FFmpeg 已关闭，临时录制文件已清理；项目素材保留，可以重新选择文件夹或再次导出。","success");
+   loadHistory();
+  }
   if(result.status==="completed"){
    reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;
-   clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
+   finishExportControls();
    setStatus("success","导出完成");setProgress(100,"视频已生成");
    $("#video-duration").textContent=formatSeconds(result.duration);
    const captureInfo=result.metrics?.captureWidth&&result.metrics?.captureHeight
@@ -429,20 +510,21 @@ async function pollJob(jobId){
   }
   if(result.status==="failed"){
    reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;
-   clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
+   finishExportControls();
    setStatus("error","导出失败");
    if(!showLivePreview())posterPreview.hidden=false;
    showMessage(result.error||"导出失败。请下载本次诊断日志排查原因。","error");
    loadHistory();
   }
  }catch(error){
-  clearInterval(pollingTimer);pollingTimer=null;exportButton.disabled=false;
+  finishExportControls();
   setStatus("error","连接中断");showMessage(error.message,"error");
  }
 }
 
 form.addEventListener("submit",async event=>{
  event.preventDefault();
+ if(isExporting){showMessage("当前已有导出任务，请先停止或等待完成。","error");return;}
  if(isImporting){showMessage("文件仍在导入，请等待导入完成后再开始导出。","error");return;}
  if(pollingTimer)clearInterval(pollingTimer);
  const presetConfig=presets[preset.value],sourcePath=sourcePathInput.value.trim();
@@ -454,7 +536,11 @@ form.addEventListener("submit",async event=>{
   width:presetConfig.width,height:presetConfig.height,
   outputName:$("#output-name").value.trim()
  };
+ isExporting=true;isStopping=false;activeJobId=null;
  exportButton.disabled=true;
+ if(stopExportButton){stopExportButton.hidden=false;stopExportButton.disabled=true;stopExportButton.textContent="准备导出…";}
+ const clearHistoryButton=$("#clear-history");
+ if(clearHistoryButton)clearHistoryButton.disabled=true;
  resultPanel.hidden=true;
  // Do not render a second live invitation and an old result video during export.
  $("#result-video").pause();
@@ -471,11 +557,13 @@ form.addEventListener("submit",async event=>{
   const result=await requestJson("/api/export",{
    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)
   });
+  activeJobId=result.jobId;
+  if(stopExportButton){stopExportButton.disabled=false;stopExportButton.textContent="停止导出";}
   setStatus("running","正在导出视频");
   pollingTimer=setInterval(()=>pollJob(result.jobId),500);
   await pollJob(result.jobId);
  }catch(error){
-  exportButton.disabled=false;reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;showLivePreview();setStatus("error","启动失败");showMessage(error.message,"error");
+  finishExportControls();reloadPreviewButton.disabled=false;openPreviewButton.disabled=false;showLivePreview();setStatus("error","启动失败");showMessage(error.message,"error");
  }
 });
 
