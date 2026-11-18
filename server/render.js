@@ -7,6 +7,15 @@ const {chromium}=require("playwright");
 const {transcodeRecordedVideo,transcodeFrameStream,encodeLiveFrames,ffmpegPath}=require("./ffmpeg");
 const {CaptureQueue,selectEncoder}=require("./live-capture");
 
+function makeAbortError(signal){
+ const error=new Error(signal?.reason?.message||"导出任务已停止。");
+ error.name="AbortError";error.code="ABORT_ERR";
+ return error;
+}
+function throwIfAborted(signal){
+ if(signal?.aborted)throw makeAbortError(signal);
+}
+
 async function readPlaybackState(page){
  const frames=page.frames();
  const snapshots=await Promise.all(frames.map(async(frame,frameIndex)=>{
@@ -356,11 +365,12 @@ async function findDeterministicPlayerFrame(page,timeoutMs=20000){
  return null;
 }
 
-async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress}){
+async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress,signal}){
  const progressInterval=Math.max(1,Math.round(fps));
  const session=await page.context().newCDPSession(page);
  try{
  for(let index=0;index<frameCount;index++){
+  throwIfAborted(signal);
   const timeMs=index*1000/fps;
   await frame.evaluate(async(ms)=>{
    const player=window.weddingPlayer;
@@ -389,6 +399,7 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
 
 async function renderVideo(options){
  const {sourcePath,musicPath,outputPath,fps,width,height,onProgress=()=>{}}=options;
+ const signal=options.signal;
  const logger=options.logger||{info:()=>{},warn:()=>{},error:()=>{},write:()=>{}};
  const captureProfile=resolveCaptureProfile(sourcePath,width,height);
  const logicalWidth=captureProfile.width;
@@ -400,7 +411,16 @@ async function renderVideo(options){
  const recordDir=fs.mkdtempSync(path.join(os.tmpdir(),"wedding-video-record-"));
  let browser=null,context=null,sourceServer=null,liveQueue=null,liveEncoding=null,liveError=null,livePage=null,liveProfile=null;
  const taskStartedAt=Date.now();
+ const abortHandler=()=>{
+  liveQueue?.stop();
+  if(livePage?.screencast?.stop)livePage.screencast.stop().catch(()=>{});
+  if(browser)browser.close().catch(()=>{});
+  else if(context)context.close().catch(()=>{});
+  if(sourceServer)closeHttpServer(sourceServer).catch(()=>{});
+ };
+ signal?.addEventListener("abort",abortHandler,{once:true});
  try{
+  throwIfAborted(signal);
   logger.info("导出参数",{
    sourcePath,outputPath,musicPath:Boolean(musicPath),fps,width,height,
    captureProfile,playwrightVersion:require("playwright/package.json").version,
@@ -416,6 +436,7 @@ async function renderVideo(options){
    "--disable-features=CalculateNativeWinOcclusion"
   ]});
   // 浏览器视口、录制画布和最终视频统一使用目标尺寸，禁止低分辨率采集后放大。
+  throwIfAborted(signal);
   context=await browser.newContext({
    viewport:{width:logicalWidth,height:logicalHeight},
    screen:{width:logicalWidth,height:logicalHeight},
@@ -435,9 +456,10 @@ async function renderVideo(options){
   const livePath=path.join(recordDir,"live-h264.mkv");
   if(!deterministicCapture){
    if(!page.screencast?.start)throw new Error("需要 Playwright >=1.59 的连续 screencast 接口，请执行 npm ci。");
-   liveProfile=await selectEncoder(ffmpegPath,{width,height,fps,directory:recordDir});
+   liveProfile=await selectEncoder(ffmpegPath,{width,height,fps,directory:recordDir,signal});
+  throwIfAborted(signal);
    liveQueue=new CaptureQueue(fps,{onOverflow:"error"});
-   liveEncoding=encodeLiveFrames({frames:liveQueue,outputPath:livePath,fps,profile:liveProfile,logger});
+   liveEncoding=encodeLiveFrames({frames:liveQueue,outputPath:livePath,fps,profile:liveProfile,logger,signal});
    liveEncoding.catch(error=>{liveError=error;liveQueue.stop();});
    logger.info("连续录制编码器",liveProfile);
    await page.screencast.start({size:{width:logicalWidth,height:logicalHeight},fps,quality:92,onFrame:frame=>{try{liveQueue.push(frame);}catch(error){liveError=error;liveQueue.stop();}}});
@@ -593,17 +615,19 @@ async function renderVideo(options){
    });
    let renderedFrames=0;
    const frameStream=createDeterministicFrameStream({
-    page,frame:playerFrame,fps,frameCount:expectedFrames,
+    page,frame:playerFrame,fps,frameCount:expectedFrames,signal,
     onProgress:(progress,label,message,extra)=>{renderedFrames=extra.renderedFrames;onProgress(progress,label,message,extra);}
    });
    const encoded=await transcodeFrameStream({
     frames:frameStream,outputPath,musicPath,fps,width,height,
-    expectedFrames,durationHint,logger,
+    expectedFrames,durationHint,logger,signal,
     onProgress:(ratio,message)=>{if(renderedFrames<expectedFrames)return;onProgress(82+ratio*16,"转换 MP4",message,{
      renderedFrames:expectedFrames,encodedDurationSeconds:Number((ratio*durationHint).toFixed(2))
     });}
    });
-   const captureSeconds=(Date.now()-offlineCaptureStartedAt)/1000;
+   throwIfAborted(signal);
+  onProgress(99,"完成校验","MP4 已完成编码与完整解码校验");
+  const captureSeconds=(Date.now()-offlineCaptureStartedAt)/1000;
    const taskSeconds=(Date.now()-taskStartedAt)/1000;
    const finalState=await readPlaybackState(page);
    const metrics={
@@ -651,7 +675,9 @@ async function renderVideo(options){
   const activeScrollIds=new Set(initial.scrollables.filter(item=>item.top>1).map(item=>item.id));
 
   while(Date.now()-readyAt<maxRecordingMs){
+  throwIfAborted(signal);
    await page.waitForTimeout(500);
+  throwIfAborted(signal);
    if(liveError)throw liveError;
    const state=await readPlaybackState(page);
    latestState=state;
@@ -794,12 +820,14 @@ async function renderVideo(options){
   onProgress(82,"封装 MP4","H.264 已实时编码完成，正在封装并完整校验，不重复视频编码",{recordingSeconds:Number(captureSeconds.toFixed(2)),scrollProgress:1});
   const encoded=await transcodeRecordedVideo({
    inputPath:recordedPath,outputPath,musicPath,fps,width,height,
-   durationHint:captureSeconds,logger,copyVideo:true,
+   durationHint:captureSeconds,logger,copyVideo:true,signal,
    onProgress:state=>{
     const ratio=captureSeconds>0?Math.min(1,state.outTimeSeconds/captureSeconds):0;
     onProgress(82+ratio*16,"封装 MP4","已封装 "+state.outTimeSeconds.toFixed(1)+" 秒",{recordingSeconds:Number(captureSeconds.toFixed(2)),encodedFrames:state.frame});
    }
   });
+  throwIfAborted(signal);
+  onProgress(99,"完成校验","MP4 已完成编码与完整解码校验");
   const taskSeconds=(Date.now()-taskStartedAt)/1000;
   const metrics={
    mode:"native-screencast-h264",
@@ -834,6 +862,7 @@ async function renderVideo(options){
  }catch(error){
   throw error;
  }finally{
+  signal?.removeEventListener("abort",abortHandler);
   if(liveQueue){await livePage?.screencast.stop().catch(()=>{});liveQueue.stop();if(liveEncoding)await liveEncoding.catch(()=>{});}
   if(context)await context.close().catch(()=>{});
   if(browser)await browser.close().catch(()=>{});
