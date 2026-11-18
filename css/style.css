@@ -255,6 +255,7 @@ button{cursor:pointer}
   background:#090d13;object-fit:contain;box-shadow:0 18px 45px rgba(0,0,0,.28);
 }
 .result-actions{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:15px}
+.playback-stats{display:block;margin:12px auto 0;text-align:center;color:#cbd5e1;font-size:12px;line-height:1.7;font-variant-numeric:tabular-nums}
 .result-actions .download-link{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 14px;border-radius:6px;color:#fff;background:#a86f51;text-decoration:none;font-size:10px}
 .result-actions .secondary-button{min-height:34px;border-color:rgba(255,255,255,.22);color:#e5eaf0;background:rgba(255,255,255,.08)}
 .result-actions .secondary-button:hover{background:rgba(255,255,255,.15)}

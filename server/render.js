@@ -330,6 +330,8 @@ function findDeterministicCaptureScript(sourcePath){
   if(extension!==".html"&&extension!==".htm"&&extension!==".js"&&extension!==".mjs"&&extension!==".cjs")continue;
   let content="";
   try{content=fs.readFileSync(file,"utf8");}catch(_){continue;}
+  // Explicit HTML contract: fail on broken APIs rather than fall back to live.
+  if(/<meta\b(?=[^>]*\bname\s*=\s*["']wedding-video-capture["'])(?=[^>]*\bcontent\s*=\s*["']deterministic["'])[^>]*>/i.test(content))return file;
   if(/__OFFLINE_CAPTURE/.test(content)&&/weddingPlayer/.test(content)&&/renderAt\s*=/.test(content)&&/renderCapture\s*=/.test(content)){
    return file;
   }
@@ -352,10 +354,8 @@ async function findDeterministicPlayerFrame(page,timeoutMs=20000){
   for(const frame of page.frames()){
    try{
     const supported=await frame.evaluate(()=>Boolean(
-     window.weddingPlayer&&
-     typeof window.weddingPlayer.renderAt==="function"&&
-     typeof window.weddingPlayer.renderCapture==="function"&&
-     window.weddingPlayer.ready
+     [window.weddingPlayer,window.templatePlayer,window.invitationPlayer].some(player=>
+      player&&typeof player.renderAt==="function"&&typeof player.renderCapture==="function"&&player.ready)
     ));
     if(supported)return frame;
    }catch(_){}
@@ -373,7 +373,7 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
   throwIfAborted(signal);
   const timeMs=index*1000/fps;
   await frame.evaluate(async(ms)=>{
-   const player=window.weddingPlayer;
+   const player=[window.weddingPlayer,window.templatePlayer,window.invitationPlayer].find(p=>p&&typeof p.renderAt==="function"&&typeof p.renderCapture==="function"&&p.ready);
    if(!player||typeof player.renderAt!=="function"||typeof player.renderCapture!=="function"){
     throw new Error("邀请函逐帧渲染接口在导出过程中丢失。");
    }
@@ -383,7 +383,12 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
     try{animation.pause();animation.currentTime=ms;}catch(_){}
    }
   },timeMs);
-  // Capture forces compositing after renderCapture; skip PNG compression work.
+  // Commit animation/scroll changes before capturing the compositor surface.
+  await frame.evaluate(async()=>{
+   await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+   document.documentElement.getBoundingClientRect();
+  });
+  // Lossless PNG; skip compression work without changing the pixels.
   const shot=await session.send("Page.captureScreenshot",{format:"png",captureBeyondViewport:false,optimizeForSpeed:true});
   const image=Buffer.from(shot.data,"base64");
   if(index%progressInterval===0||index===frameCount-1){
@@ -405,7 +410,10 @@ async function renderVideo(options){
  const logicalWidth=captureProfile.width;
  const logicalHeight=captureProfile.height;
  const requestedMode=options.captureMode||process.env.WEDDING_CAPTURE_MODE||"auto";
- const deterministicCaptureScript=requestedMode!=="live"?findDeterministicCaptureScript(sourcePath):null;
+ const deterministicCaptureScript=findDeterministicCaptureScript(sourcePath);
+ const requiresDeterministic=Boolean(deterministicCaptureScript&&/\.html?$/i.test(deterministicCaptureScript));
+ if(requiresDeterministic&&requestedMode==="live")throw new Error("这个网页要求同步逐帧导出，不能使用实时录屏。请移除 WEDDING_CAPTURE_MODE=live。");
+ if(!["auto","live","deterministic"].includes(requestedMode))throw new Error("未知的导出模式："+requestedMode);
  const deterministicCapture=requestedMode==="deterministic"||(requestedMode==="auto"&&Boolean(deterministicCaptureScript));
  if(deterministicCapture&&!deterministicCaptureScript)throw new Error("该项目没有逐帧接口；请使用默认的连续录制模式。");
  const recordDir=fs.mkdtempSync(path.join(os.tmpdir(),"wedding-video-record-"));
@@ -567,7 +575,7 @@ async function renderVideo(options){
   });
   const address=sourceServer.address();
   const sourceUrl="http://127.0.0.1:"+address.port+"/"+encodeURIComponent(path.basename(sourcePath));
-  onProgress(3,"加载邀请函","通过本地 HTTP 加载网页；从页面打开开始记录真实播放");
+  onProgress(3,"加载邀请函",deterministicCapture?"同步逐帧导出：加载网页，准备统一时间轴":"实时录屏：从页面打开开始记录真实播放");
   // 录制起点放在导航之前：网页自己的启动延迟、分段停顿和变速滚动都会完整保留。
   const recordingStartedAt=Date.now();
   if(liveQueue)liveQueue.start(recordingStartedAt);
@@ -580,17 +588,20 @@ async function renderVideo(options){
    selectedFrameUrl:initial.frameUrl,frames:initial.frameSnapshots,
    pageErrors,consoleIssues,networkIssues,frameEvents
   });
-  onProgress(5,"等待网页自动播放","网页已加载，正在检查主页面和 iframe 的播放器状态");
+  onProgress(5,deterministicCapture?"同步逐帧导出":"等待网页自动播放",deterministicCapture?"正在检查时间轴接口；接口缺失将停止导出":"网页已加载，正在检查主页面和 iframe 的播放器状态");
 
   if(deterministicCapture){
    const playerFrame=await findDeterministicPlayerFrame(page);
    if(!playerFrame)throw new Error("项目包含离线逐帧渲染接口，但 20 秒内没有找到 weddingPlayer.renderAt/renderCapture。请检查邀请函 iframe 和播放器脚本是否加载成功。");
    onProgress(6,"准备逐帧渲染","正在等待邀请函素材、字体和动画资源准备完成");
    const playerInfo=await playerFrame.evaluate(async()=>{
-    const player=window.weddingPlayer;
+    const playerKey=["weddingPlayer","templatePlayer","invitationPlayer"].find(key=>{
+     const p=window[key];return p&&typeof p.renderAt==="function"&&typeof p.renderCapture==="function"&&p.ready;
+    });
+    const player=window[playerKey];
     await player.ready;
     return {
-     totalMs:Number(player.totalMs)||0,
+     totalMs:Number(player.totalMs)||0,playerKey,
      state:player.state||"",
      metrics:player.metrics||null,
      errors:Array.isArray(player.errors)?player.errors.slice():[]
@@ -652,7 +663,7 @@ async function renderVideo(options){
     chapterCount:playerInfo.metrics?.chapters||finalState.chapterCount,
     frameCount:finalState.frameCount,
     selectedFrameUrl:playerFrame.url(),
-    playerKey:"weddingPlayer",
+    playerKey:playerInfo.playerKey,
     playerState:finalState.playerState,
     renderTimelineMs:totalMs,
     renderMethod:"player.renderAt + player.renderCapture",

@@ -12,6 +12,18 @@ const presets={
  square:{width:1080,height:1080,label:"1080 × 1080"}
 };
 let workspaceId=null,pollingTimer=null,isImporting=false,activeJobId=null,isStopping=false,isExporting=false;
+const resultPlayback=createVideoPlayback($("#result-video"),$("#playback-stats"),{
+ onPlay:suspendLivePreview,
+ onOtherPlayback:suspendLivePreview
+});
+
+function suspendLivePreview(){
+ if(invitationPreview){
+  invitationPreview.dataset.previewUrl="";
+  invitationPreview.src="about:blank";
+ }
+ if(previewViewport)previewViewport.hidden=true;
+}
 
 function setWorkspaceName(name){
  const element=$("#workspace-name");
@@ -41,10 +53,7 @@ function updatePreviewPreset(){
 
 function hideLivePreview(){
  previewUrl=null;previewBaseUrl=null;
- if(invitationPreview){
-  invitationPreview.dataset.previewUrl="";
-  invitationPreview.src="about:blank";
- }
+ suspendLivePreview();
  if(previewViewport)previewViewport.hidden=true;
  if(posterPreview)posterPreview.hidden=false;
  if(reloadPreviewButton)reloadPreviewButton.disabled=true;
@@ -54,6 +63,8 @@ function hideLivePreview(){
 
 function showLivePreview(){
  if(!workspaceId||!previewUrl||!invitationPreview)return false;
+ resultPlayback.release();
+ resultPlayback.claim();
  resultPanel.hidden=true;
  if(invitationPreview.src==="about:blank"){invitationPreview.dataset.previewUrl=previewUrl;invitationPreview.src=previewUrl;}
  posterPreview.hidden=true;
@@ -68,6 +79,8 @@ function loadWorkspacePreview(id,baseUrl){
   setPreviewStatus("预览服务未启动","error");
   return;
  }
+ resultPlayback.release();
+ resultPlayback.claim();
  previewBaseUrl=baseUrl.endsWith("/")?baseUrl:baseUrl+"/";
  const url=previewBaseUrl+"?preview="+Date.now();
  previewUrl=url;
@@ -109,10 +122,17 @@ function refreshWorkspacePreview(){
 window.addEventListener("resize",updatePreviewPreset);
 
 reloadPreviewButton?.addEventListener("click",()=>{
- if(showLivePreview())refreshWorkspacePreview();
+ refreshWorkspacePreview();
+});
+$("#open-existing-video")?.addEventListener("click",()=>{
+ resultPlayback.pause();suspendLivePreview();resultPlayback.claim();
+ window.open("player.html","_blank","noopener");
 });
 openPreviewButton?.addEventListener("click",()=>{
- if(previewBaseUrl)window.open(previewBaseUrl,"_blank","noopener,noreferrer");
+ if(previewBaseUrl){
+  resultPlayback.release();suspendLivePreview();resultPlayback.claim();
+  window.open(previewBaseUrl,"_blank","noopener,noreferrer");
+ }
 });
 
 document.querySelectorAll(".sidebar-link").forEach(link=>{
@@ -435,12 +455,15 @@ musicInput.addEventListener("change",async()=>{
 function showResult(result){
  const panel=$("#result-panel"),video=$("#result-video"),download=$("#download-link"),open=$("#open-video");
  posterPreview.hidden=true;
- previewViewport.hidden=true;
+ suspendLivePreview();
  setPreviewStatus("成片已生成","ready");
  const url=result.outputUrl+"?v="+Date.now();
- video.pause();video.src=url;video.load();
+ resultPlayback.load(url);
  download.href=result.outputUrl;download.download=result.outputName;download.textContent="下载 "+result.outputName;
- open.onclick=()=>window.open(result.outputUrl,"_blank","noopener");
+ open.onclick=()=>{
+  resultPlayback.pause();suspendLivePreview();
+  window.open("player.html?file="+encodeURIComponent(result.outputName),"_blank","noopener");
+ };
  panel.hidden=false;
 }
 
@@ -505,7 +528,9 @@ async function pollJob(jobId){
     ?("原始采集："+result.metrics.captureWidth+" × "+result.metrics.captureHeight+(result.metrics.nativeResolution?"（原生高清采集）。":"（采集后缩放）。"))
     :"";
    const captureStats=result.metrics?.captureStats;
-   const qualityInfo=captureStats?(" 编码器："+result.metrics.encoder+"；源画面采集约 "+captureStats.sourceFps+" FPS；队列丢帧 "+captureStats.droppedSourceFrames+"。源帧率包含停顿与静止画面，输出 FPS 不单独代表流畅度。 "):"";
+   const qualityInfo=result.metrics?.mode==="deterministic-player-frame-rendering"
+    ?(" 同步逐帧导出 · "+result.metrics.frames+" 帧 / "+result.metrics.fps+" FPS；按网页时间轴生成，未使用实时录屏补帧。 ")
+    :captureStats?(" 实时录屏 · 编码器："+result.metrics.encoder+"；源画面采集约 "+captureStats.sourceFps+" FPS；队列丢帧 "+captureStats.droppedSourceFrames+"。源帧率包含停顿与静止画面，输出 FPS 不单独代表流畅度。 "):"";
    showMessage("导出成功。"+captureInfo+qualityInfo+"可以播放或下载 MP4。","success");
    showResult(result);
   }
@@ -543,8 +568,8 @@ form.addEventListener("submit",async event=>{
  if(clearHistoryButton)clearHistoryButton.disabled=true;
  resultPanel.hidden=true;
  // Do not render a second live invitation and an old result video during export.
- $("#result-video").pause();
- invitationPreview.dataset.previewUrl="";invitationPreview.src="about:blank";
+ resultPlayback.release();resultPlayback.claim();
+ suspendLivePreview();
  previewViewport.hidden=true;posterPreview.hidden=false;
  reloadPreviewButton.disabled=true;openPreviewButton.disabled=true;
  setPreviewStatus("导出中 · 预览暂时停止","loading");

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>独立成片播放</title>
+ <style>
+  *{box-sizing:border-box}body{margin:0;background:#101216;color:#e8ebef;font:14px system-ui,sans-serif}
+  main{max-width:1100px;margin:auto;padding:18px}h1{font-size:20px;margin:0 0 14px}
+  form{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}input{min-width:180px;flex:1}
+  input,button,a{font:inherit;padding:9px 12px;border:1px solid #48505c;border-radius:5px;background:#20252d;color:inherit}
+  a{text-decoration:none}button{cursor:pointer}video{display:block;max-width:100%;width:auto;height:calc(100vh - 200px);min-height:200px;margin:auto;background:#000}
+  output{display:block;margin-top:14px;font-variant-numeric:tabular-nums;line-height:1.8}
+  p{color:#aeb8c6;font-size:12px;line-height:1.6}
+ </style>
+ <script src="js/video-playback.js" defer></script>
+ <script src="js/player.js" defer></script>
+</head>
+<body><main>
+ <h1>独立成片播放</h1>
+ <form id="player-form"><input id="video-name" aria-label="成片文件名" list="existing-videos" value="wedding-invitation.mp4" required><datalist id="existing-videos"></datalist><button type="submit">载入视频</button><a id="download-video" download>下载视频</a></form>
+ <video id="player-video" controls playsinline preload="auto"></video>
+ <output id="playback-stats" role="status"></output>
+ <p>浏览器丢帧表示播放端未能及时显示的帧，不代表文件缺帧；数字为本次载入累计。请在播放后观察。缓冲等待不计初次加载和主动跳转。</p>
+</main></body></html>

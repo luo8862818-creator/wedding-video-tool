@@ -108,7 +108,9 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  const outputDir=path.dirname(outputPath);
  fs.mkdirSync(outputDir,{recursive:true});
  const partialPath=path.join(outputDir,path.parse(outputPath).name+".partial-"+process.pid+"-"+Date.now()+".mp4");
- const filter="fps="+fps+":round=near,scale="+width+":"+height+":flags=lanczos:force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
+ // Each input image already represents one exact timeline frame. Do not
+ // resample it through an fps filter or synthesize/drop frames a second time.
+ const filter="scale="+width+":"+height+":flags=lanczos:force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
  logger?.info("FFmpeg 逐帧转码参数",{
   input:"PNG image2pipe",fps,width,height,expectedFrames,
   expectedDurationSeconds:durationHint,filter,videoCodec:"libx264",preset:"veryfast",crf:18,music:Boolean(musicPath)
@@ -119,8 +121,8 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  if(musicPath)args.push("-stream_loop","-1","-i",musicPath);
  args.push("-map","0:v:0");
  if(musicPath)args.push("-map","1:a:0");
- args.push("-vf",filter,"-c:v","libx264","-preset","veryfast","-threads","2","-crf","18","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","cfr");
- if(musicPath)args.push("-c:a","aac","-b:a","192k","-shortest");
+ args.push("-vf",filter,"-c:v","libx264","-preset","veryfast","-threads","2","-crf","18","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","passthrough");
+ if(musicPath)args.push("-c:a","aac","-b:a","192k","-t",String(durationHint));
  else args.push("-an");
  args.push("-movflags","+faststart","-progress","pipe:2",partialPath);
 
@@ -141,10 +143,11 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
   ],{logger,phase:"MP4 完整解码校验",signal});
   if(!checked.frame)throw new Error("MP4 校验失败：没有检测到有效视频帧。");
   if(Number.isFinite(expectedFrames)&&checked.frame!==expectedFrames){
-   logger?.warn("逐帧输出数量与预期不一致",{expectedFrames,actualFrames:checked.frame});
+   throw new Error("逐帧输出帧数不一致，已停止交付：预期 "+expectedFrames+" 帧，实际 "+checked.frame+" 帧。");
   }
   const size=fs.statSync(partialPath).size;
-  const durationSeconds=Number((checked.outTimeSeconds>0?checked.outTimeSeconds:checked.frame/fps).toFixed(3));
+  // Decoder progress may report the last frame PTS, which excludes its duration.
+  const durationSeconds=Number((checked.frame/fps).toFixed(3));
   throwIfAborted(signal);
   const backupPath=outputPath+".previous-"+process.pid+"-"+Date.now();
   const hadPrevious=fs.existsSync(outputPath);

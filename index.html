@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#f4f5f7">
   <title>Wedding Studio · 婚礼视频工作台</title>
   <link rel="stylesheet" href="./css/style.css">
+  <script src="./js/video-playback.js" defer></script>
   <script src="./js/app.js" defer></script>
 </head>
 <body>
@@ -101,6 +102,7 @@
                 <span id="preview-status" class="preview-status">等待导入</span>
                 <button id="reload-preview" class="preview-tool-button" type="button" disabled>刷新预览</button>
                 <button id="open-preview" class="preview-tool-button" type="button" disabled>新窗口</button>
+                <button id="open-existing-video" class="preview-tool-button" type="button">播放已有成片</button>
               </div>
             </div>
           </div>
@@ -138,10 +140,11 @@
                 <div><span class="panel-kicker">RENDERED VIDEO</span><h3>导出成片</h3></div>
                 <span class="result-ready"><i></i> 已生成</span>
               </div>
-              <video id="result-video" controls playsinline preload="metadata"></video>
+              <video id="result-video" controls playsinline preload="auto"></video>
+              <output id="playback-stats" class="playback-stats" role="status"></output>
               <div class="result-actions">
                 <a id="download-link" class="download-link" download>下载 MP4</a>
-                <button id="open-video" class="secondary-button" type="button">新窗口播放</button>
+                <button id="open-video" class="secondary-button" type="button">独立播放</button>
               </div>
             </section>
 
@@ -234,9 +237,9 @@
             <div class="field">
               <span>输出帧率</span>
               <select id="fps">
-                <option value="30" selected>30 FPS · 推荐</option>
+                <option value="30" selected>30 FPS · 标准</option>
                 <option value="25">25 FPS</option>
-                <option value="60">60 FPS</option>
+                <option value="60">60 FPS · 接近网页流畅度</option>
               </select>
             </div>
 
