@@ -91,14 +91,15 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  const filter="fps="+fps+":round=near,scale="+width+":"+height+":flags=lanczos:force_original_aspect_ratio=decrease,pad="+width+":"+height+":(ow-iw)/2:(oh-ih)/2,setsar=1";
  logger?.info("FFmpeg 逐帧转码参数",{
   input:"PNG image2pipe",fps,width,height,expectedFrames,
-  expectedDurationSeconds:durationHint,filter,videoCodec:"libx264",preset:"fast",crf:18,music:Boolean(musicPath)
+  expectedDurationSeconds:durationHint,filter,videoCodec:"libx264",preset:"veryfast",crf:18,music:Boolean(musicPath)
  });
  const args=["-y","-hide_banner","-loglevel","error",
+  "-threads","2","-probesize","32","-analyzeduration","0","-fpsprobesize","0",
   "-f","image2pipe","-framerate",String(fps),"-vcodec","png","-i","pipe:0"];
  if(musicPath)args.push("-stream_loop","-1","-i",musicPath);
  args.push("-map","0:v:0");
  if(musicPath)args.push("-map","1:a:0");
- args.push("-vf",filter,"-c:v","libx264","-preset","fast","-crf","18","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","cfr");
+ args.push("-vf",filter,"-c:v","libx264","-preset","veryfast","-threads","2","-crf","18","-profile:v","high","-pix_fmt","yuv420p","-fps_mode","cfr");
  if(musicPath)args.push("-c:a","aac","-b:a","192k","-shortest");
  else args.push("-an");
  args.push("-movflags","+faststart","-progress","pipe:2",partialPath);

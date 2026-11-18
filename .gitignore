@@ -25,3 +25,7 @@ Thumbs.db
 # Local QA dependencies and recovered tools
 .test-bin/
 .npm-cache/
+
+
+/diagnostics
+/fixtures

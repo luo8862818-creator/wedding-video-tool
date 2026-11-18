@@ -5,7 +5,7 @@ Windows 本地 HTML 婚礼邀请函视频导出工具。Playwright 负责真实�
 ## 当前导出流程
 
 1. 导入 HTML/完整项目，或填写本机 index.html 路径。导出期间暂停工具自己的实时预览，避免同时运行两份邀请函。
-2. Chromium 按网页自己的 JavaScript、CSS 和真实时间播放。默认连续录制，不自动切换逐帧 PNG 截图。
+2. 自动检测网页是否提供完整的同步时间轴接口（`__OFFLINE_CAPTURE`、`weddingPlayer.renderAt/renderCapture/ready/totalMs`）。支持时逐帧导出，不依赖实时采集速度；其他网页继续连续录制。可用 `WEDDING_CAPTURE_MODE=live` 强制实时录制。
 3. 复用浏览器原生连续 JPEG 画面，经有界二进制队列直接送 FFmpeg，实时编码一次 H.264。时间戳采样保留原有停顿，不加速网页。
 4. 启动时实测可用编码器。软件使用 veryfast / CRF 18 / 两线程；硬件没有明显速度优势时优先软件，避免错误地把“能启动”当作“能稳定实时编码”。
 5. 结束时直接把 H.264 封装为 MP4，可同时合成背景音乐，无须再次视频转码。完整解码校验通过后才替换正式输出。

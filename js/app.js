@@ -471,7 +471,7 @@ form.addEventListener("submit",async event=>{
   const result=await requestJson("/api/export",{
    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)
   });
-  setStatus("running","真实播放录制");
+  setStatus("running","正在导出视频");
   pollingTimer=setInterval(()=>pollJob(result.jobId),500);
   await pollJob(result.jobId);
  }catch(error){

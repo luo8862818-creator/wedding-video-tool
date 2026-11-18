@@ -358,6 +358,8 @@ async function findDeterministicPlayerFrame(page,timeoutMs=20000){
 
 async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress}){
  const progressInterval=Math.max(1,Math.round(fps));
+ const session=await page.context().newCDPSession(page);
+ try{
  for(let index=0;index<frameCount;index++){
   const timeMs=index*1000/fps;
   await frame.evaluate(async(ms)=>{
@@ -370,9 +372,10 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
    for(const animation of document.getAnimations()){
     try{animation.pause();animation.currentTime=ms;}catch(_){}
    }
-   await new Promise(resolve=>requestAnimationFrame(resolve));
   },timeMs);
-  const image=await page.screenshot({type:"png",caret:"hide"});
+  // Capture forces compositing after renderCapture; skip PNG compression work.
+  const shot=await session.send("Page.captureScreenshot",{format:"png",captureBeyondViewport:false,optimizeForSpeed:true});
+  const image=Buffer.from(shot.data,"base64");
   if(index%progressInterval===0||index===frameCount-1){
    const progress=6+((index+1)/frameCount)*72;
    onProgress(progress,"逐帧渲染邀请函",
@@ -381,6 +384,7 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
   }
   yield image;
  }
+ }finally{await session.detach().catch(()=>{});}
 }
 
 async function renderVideo(options){
@@ -389,8 +393,9 @@ async function renderVideo(options){
  const captureProfile=resolveCaptureProfile(sourcePath,width,height);
  const logicalWidth=captureProfile.width;
  const logicalHeight=captureProfile.height;
- const deterministicCapture=options.captureMode==="deterministic"||process.env.WEDDING_CAPTURE_MODE==="deterministic";
- const deterministicCaptureScript=deterministicCapture?findDeterministicCaptureScript(sourcePath):null;
+ const requestedMode=options.captureMode||process.env.WEDDING_CAPTURE_MODE||"auto";
+ const deterministicCaptureScript=requestedMode!=="live"?findDeterministicCaptureScript(sourcePath):null;
+ const deterministicCapture=requestedMode==="deterministic"||(requestedMode==="auto"&&Boolean(deterministicCaptureScript));
  if(deterministicCapture&&!deterministicCaptureScript)throw new Error("该项目没有逐帧接口；请使用默认的连续录制模式。");
  const recordDir=fs.mkdtempSync(path.join(os.tmpdir(),"wedding-video-record-"));
  let browser=null,context=null,sourceServer=null,liveQueue=null,liveEncoding=null,liveError=null,livePage=null,liveProfile=null;
@@ -586,16 +591,17 @@ async function renderVideo(options){
     captureSize:{width:logicalWidth,height:logicalHeight},
     playerMetrics:playerInfo.metrics
    });
+   let renderedFrames=0;
    const frameStream=createDeterministicFrameStream({
     page,frame:playerFrame,fps,frameCount:expectedFrames,
-    onProgress:(progress,label,message,extra)=>onProgress(progress,label,message,extra)
+    onProgress:(progress,label,message,extra)=>{renderedFrames=extra.renderedFrames;onProgress(progress,label,message,extra);}
    });
    const encoded=await transcodeFrameStream({
     frames:frameStream,outputPath,musicPath,fps,width,height,
     expectedFrames,durationHint,logger,
-    onProgress:(ratio,message)=>onProgress(82+ratio*16,"转换 MP4",message,{
+    onProgress:(ratio,message)=>{if(renderedFrames<expectedFrames)return;onProgress(82+ratio*16,"转换 MP4",message,{
      renderedFrames:expectedFrames,encodedDurationSeconds:Number((ratio*durationHint).toFixed(2))
-    })
+    });}
    });
    const captureSeconds=(Date.now()-offlineCaptureStartedAt)/1000;
    const taskSeconds=(Date.now()-taskStartedAt)/1000;
