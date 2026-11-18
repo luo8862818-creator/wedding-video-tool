@@ -6,7 +6,7 @@ const {renderVideo}=require("./render");
 const {createFileLogger}=require("./logger");
 const app=express(),HOST="127.0.0.1",PORT=Number(process.env.PORT||3000);
 const ROOT=path.resolve(__dirname,".."),OUTPUT_DIR=path.join(ROOT,"output"),WORKSPACE_DIR=path.join(ROOT,"workspaces"),LOG_DIR=path.join(OUTPUT_DIR,"logs");
-const jobs=new Map(),workspaces=new Map();let activeJobId=null,activePreviewWorkspaceId=null;
+const jobs=new Map(),workspaces=new Map(),jobControllers=new Map();let activeJobId=null,activePreviewWorkspaceId=null;
 const HISTORY_FILE=path.join(OUTPUT_DIR,"export-history.json");
 fs.mkdirSync(OUTPUT_DIR,{recursive:true});fs.mkdirSync(WORKSPACE_DIR,{recursive:true});fs.mkdirSync(LOG_DIR,{recursive:true});
 const serverLogger=createFileLogger(path.join(LOG_DIR,"server.log"));
@@ -89,6 +89,39 @@ app.use(express.json({limit:"1mb"}));
 app.use(express.static(ROOT,{index:"index.html",dotfiles:"ignore"}));
 app.get("/api/health",(_req,res)=>res.json({ok:true,service:"wedding-video-tool"}));
 app.get("/api/history",(_req,res)=>res.json({items:readHistory()}));
+
+app.delete("/api/history/:id",(req,res)=>{
+ const id=String(req.params.id||"");
+ if(!/^[0-9a-f-]{36}$/i.test(id))return fail(res,400,"历史记录编号不合法。");
+ const records=readHistory();
+ const next=records.filter(item=>item.id!==id);
+ if(next.length===records.length)return fail(res,404,"历史记录不存在或已经删除。");
+ try{
+  writeHistory(next);
+  try{fs.rmSync(path.join(LOG_DIR,id+".log"),{force:true});}
+  catch(error){serverLogger.warn("删除历史记录日志失败",{id,message:error.message});}
+  res.json({ok:true,deletedCount:1});
+ }catch(error){
+  return fail(res,500,"删除历史记录失败："+error.message);
+ }
+});
+
+app.delete("/api/history",(_req,res)=>{
+ if(activeJobId)return fail(res,409,"当前仍有导出任务，请先停止或等待任务结束后再清理历史记录。");
+ const records=readHistory();
+ try{
+  writeHistory([]);
+  let deletedLogs=0;
+  for(const name of fs.readdirSync(LOG_DIR)){
+   if(!/^[0-9a-f-]{36}\.log$/i.test(name))continue;
+   fs.rmSync(path.join(LOG_DIR,name),{force:true});
+   deletedLogs++;
+  }
+  res.json({ok:true,deletedCount:records.length,deletedLogs});
+ }catch(error){
+  return fail(res,500,"清空历史记录失败："+error.message);
+ }
+});
 
 app.post("/api/workspaces",async(_req,res)=>{
  try{
@@ -186,6 +219,8 @@ app.post("/api/export",async(req,res)=>{
   error:null,startedAt,startedAtMs:Date.now(),duration:null,playbackRate:1,
   fps:frameRate,width,height,frameCount:null,avgFps:null,music:Boolean(music),metrics:null
  };
+ const controller=new AbortController();
+ jobControllers.set(jobId,controller);
  jobs.set(jobId,job);activeJobId=jobId;
  logger.info("导出任务开始",{
   jobId,sourcePath:source,musicSelected:Boolean(music),fps:frameRate,
@@ -194,7 +229,7 @@ app.post("/api/export",async(req,res)=>{
  res.status(202).json({jobId,logUrl:job.logUrl});
  renderVideo({
   sourcePath:source,musicPath:music,outputPath:path.join(OUTPUT_DIR,finalName),
-  fps:frameRate,width,height,logger,
+  fps:frameRate,width,height,logger,signal:controller.signal,
   onProgress:(progress,stepLabel,message,metrics)=>{
    Object.assign(job,{progress,stepLabel,message});
    if(metrics){
@@ -205,10 +240,21 @@ app.post("/api/export",async(req,res)=>{
    }
   }
  })
- .then(()=>{Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"});})
+ .then(()=>{
+  if(job.cancelRequested){
+   Object.assign(job,{status:"cancelled",stepLabel:"已停止",message:"导出已停止，临时资源已清理",error:null});
+  }else{
+   Object.assign(job,{status:"completed",progress:100,stepLabel:"完成",message:"视频已生成"});
+  }
+ })
  .catch(error=>{
-  job.status="failed";job.error=error.message||"未知导出错误";job.stepLabel="导出失败";
-  logger.error("导出任务失败",{message:job.error,stack:error.stack||""});
+  if(job.cancelRequested||controller.signal.aborted||error.name==="AbortError"){
+   Object.assign(job,{status:"cancelled",stepLabel:"已停止",message:"导出已停止，临时资源已清理",error:null});
+   logger.warn("用户停止导出任务",{message:error.message||"已收到停止请求"});
+  }else{
+   job.status="failed";job.error=error.message||"未知导出错误";job.stepLabel="导出失败";
+   logger.error("导出任务失败",{message:job.error,stack:error.stack||""});
+  }
  })
  .finally(async()=>{
   job.finishedAt=new Date().toISOString();
@@ -221,6 +267,7 @@ app.post("/api/export",async(req,res)=>{
   });
   try{saveHistory(job);}catch(error){logger.error("保存导出历史记录失败",{message:error.message});}
   activeJobId=null;
+  jobControllers.delete(jobId);
   await logger.close();
  });
 });
@@ -233,6 +280,23 @@ app.get("/api/logs/:id",(req,res)=>{
  res.download(filePath,"wedding-video-"+id+".log",error=>{
   if(error&&!res.headersSent)serverLogger.error("下载任务日志失败",{id,message:error.message});
  });
+});
+
+app.post("/api/jobs/:id/cancel",(req,res)=>{
+ const job=jobs.get(req.params.id);
+ if(!job)return fail(res,404,"任务不存在或服务已重启。");
+ if(job.status==="cancelling")return res.json({ok:true,status:"cancelling"});
+ if(job.status!=="running")return fail(res,409,"当前任务已经结束，无需停止。");
+ if(job.progress>=99)return fail(res,409,"视频已完成最终校验，正在结束任务，无法再取消。");
+ const controller=jobControllers.get(req.params.id);
+ if(!controller)return fail(res,409,"任务当前无法取消，请稍后刷新状态。");
+ job.cancelRequested=true;
+ job.status="cancelling";
+ job.stepLabel="正在停止";
+ job.message="已收到停止请求，正在关闭浏览器、FFmpeg 并清理临时文件。";
+ serverLogger.info("收到停止导出请求",{jobId:req.params.id});
+ controller.abort();
+ res.json({ok:true,status:"cancelling"});
 });
 
 app.get("/api/jobs/:id",(req,res)=>{
