@@ -100,7 +100,7 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
  });
 }
 
-async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,height,expectedFrames,durationHint,onProgress=()=>{},logger,signal}){
+async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,height,expectedFrames,durationHint,onProgress=()=>{},onCommitted=()=>{},logger,signal}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!frames||typeof frames[Symbol.asyncIterator]!=="function")throw new Error("逐帧图片输入流无效。");
  if(!Number.isFinite(fps)||fps<1)throw new Error("逐帧编码帧率无效。");
@@ -163,6 +163,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
    width,height,fps,durationSeconds,sizeBytes:size,
    frames:checked.frame,expectedFrames,encodedFrames:converted.frame
   });
+  onCommitted({frames:checked.frame,durationSeconds,size});
   return {
    frames:checked.frame,durationSeconds,size,encodedFrames:converted.frame,
    expectedFrames,avgFps:Number((checked.frame/(durationSeconds||1)).toFixed(2))
@@ -174,7 +175,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  }
 }
 
-async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{},logger,copyVideo=false,signal}){
+async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{},onCommitted=()=>{},logger,copyVideo=false,signal}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!fs.existsSync(inputPath)||fs.statSync(inputPath).size===0)throw new Error("浏览器录制文件不存在或为空，无法生成 MP4。");
 
@@ -226,6 +227,7 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
    catch(cleanupError){logger?.warn("旧视频备份清理失败",{message:cleanupError.message});}
   }
   logger?.info("MP4 输出校验通过",{width,height,fps,durationSeconds,sizeBytes:size,frames:checked.frame,encodedFrames:converted.frame});
+  onCommitted({frames:checked.frame,durationSeconds,size});
   return {
    frames:checked.frame,
    durationSeconds,
