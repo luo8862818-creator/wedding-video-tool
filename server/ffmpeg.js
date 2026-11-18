@@ -3,11 +3,29 @@ const path=require("node:path");
 const {spawn}=require("node:child_process");
 const ffmpegPath=process.env.FFMPEG_PATH||require("ffmpeg-static");
 
-function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=null,binary=ffmpegPath}={}){
+function makeAbortError(signal){
+ const error=new Error(signal?.reason?.message||"导出任务已停止。");
+ error.name="AbortError";error.code="ABORT_ERR";
+ return error;
+}
+function throwIfAborted(signal){
+ if(signal?.aborted)throw makeAbortError(signal);
+}
+
+function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=null,binary=ffmpegPath,signal}={}){
  return new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(makeAbortError(signal));return;}
   const hasInputFrames=inputFrames!==null;
   const child=spawn(binary,args,{windowsHide:true,stdio:[hasInputFrames?"pipe":"ignore","ignore","pipe"]});
   let stderr="",pending="",frame=0,outTimeUs=0,settled=false,lastProgressLogAt=0,inputError=null;
+  let abortHandler=null;
+  const cleanupAbort=()=>{if(signal&&abortHandler)signal.removeEventListener("abort",abortHandler);};
+  abortHandler=()=>{
+   inputError=makeAbortError(signal);
+   if(hasInputFrames&&!child.stdin.destroyed)child.stdin.destroy();
+   if(!child.killed)child.kill();
+  };
+  signal?.addEventListener("abort",abortHandler,{once:true});
   child.stderr.on("data",chunk=>{
    const text=chunk.toString();
    stderr=(stderr+text).slice(-12000);
@@ -61,12 +79,14 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
    })();
   }
   child.once("error",error=>{
-   if(settled)return;settled=true;
-   reject(new Error("无法启动 FFmpeg："+error.message));
+   if(settled)return;settled=true;cleanupAbort();
+   reject(signal?.aborted?makeAbortError(signal):new Error("无法启动 FFmpeg："+error.message));
   });
   child.once("close",code=>{
-   if(settled)return;settled=true;
-   if(inputError){
+   if(settled)return;settled=true;cleanupAbort();
+   if(signal?.aborted){
+    reject(makeAbortError(signal));
+   }else if(inputError){
     logger?.error(phase+"输入失败",{message:inputError.message,stderr:stderr.slice(-5000)});
     reject(inputError);
    }else if(code===0){
@@ -80,7 +100,7 @@ function runFfmpeg(args,{onProgress=()=>{},logger,phase="FFmpeg",inputFrames=nul
  });
 }
 
-async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,height,expectedFrames,durationHint,onProgress=()=>{},logger}){
+async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,height,expectedFrames,durationHint,onProgress=()=>{},onCommitted=()=>{},logger,signal}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!frames||typeof frames[Symbol.asyncIterator]!=="function")throw new Error("逐帧图片输入流无效。");
  if(!Number.isFinite(fps)||fps<1)throw new Error("逐帧编码帧率无效。");
@@ -107,7 +127,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  try{
   onProgress(0,"开始逐帧编码");
   const converted=await runFfmpeg(args,{
-   logger,phase:"逐帧 MP4 视频编码",inputFrames:frames,
+   logger,phase:"逐帧 MP4 视频编码",inputFrames:frames,signal,
    onProgress:state=>{
     const ratio=durationHint>0?Math.min(1,state.outTimeSeconds/durationHint):0;
     onProgress(ratio,"正在编码逐帧 MP4 · "+state.frame+" 帧");
@@ -118,13 +138,14 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
   const checked=await runFfmpeg([
    "-hide_banner","-loglevel","error","-i",partialPath,
    "-map","0:v:0","-progress","pipe:2","-f","null","-"
-  ],{logger,phase:"MP4 完整解码校验"});
+  ],{logger,phase:"MP4 完整解码校验",signal});
   if(!checked.frame)throw new Error("MP4 校验失败：没有检测到有效视频帧。");
   if(Number.isFinite(expectedFrames)&&checked.frame!==expectedFrames){
    logger?.warn("逐帧输出数量与预期不一致",{expectedFrames,actualFrames:checked.frame});
   }
   const size=fs.statSync(partialPath).size;
   const durationSeconds=Number((checked.outTimeSeconds>0?checked.outTimeSeconds:checked.frame/fps).toFixed(3));
+  throwIfAborted(signal);
   const backupPath=outputPath+".previous-"+process.pid+"-"+Date.now();
   const hadPrevious=fs.existsSync(outputPath);
   if(hadPrevious)fs.renameSync(outputPath,backupPath);
@@ -142,6 +163,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
    width,height,fps,durationSeconds,sizeBytes:size,
    frames:checked.frame,expectedFrames,encodedFrames:converted.frame
   });
+  onCommitted({frames:checked.frame,durationSeconds,size});
   return {
    frames:checked.frame,durationSeconds,size,encodedFrames:converted.frame,
    expectedFrames,avgFps:Number((checked.frame/(durationSeconds||1)).toFixed(2))
@@ -153,7 +175,7 @@ async function transcodeFrameStream({frames,outputPath,musicPath,fps,width,heigh
  }
 }
 
-async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{},logger,copyVideo=false}){
+async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,height,durationHint,onProgress=()=>{},onCommitted=()=>{},logger,copyVideo=false,signal}){
  if(!ffmpegPath||!fs.existsSync(ffmpegPath))throw new Error("没有找到 FFmpeg 可执行文件。请检查 ffmpeg-static 是否安装完整。");
  if(!fs.existsSync(inputPath)||fs.statSync(inputPath).size===0)throw new Error("浏览器录制文件不存在或为空，无法生成 MP4。");
 
@@ -174,7 +196,7 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
 
  try{
   onProgress({frame:0,outTimeSeconds:0,progress:"continue"});
-  const converted=await runFfmpeg(args,{logger,phase:"MP4 视频编码",onProgress:state=>{
+  const converted=await runFfmpeg(args,{logger,phase:"MP4 视频编码",signal,onProgress:state=>{
    onProgress(state);
   }});
   if(!fs.existsSync(partialPath)||fs.statSync(partialPath).size<1024)throw new Error("FFmpeg 未生成有效 MP4 文件。");
@@ -184,12 +206,13 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
   const checked=await runFfmpeg([
    "-hide_banner","-loglevel","error","-i",partialPath,
    "-map","0:v:0","-progress","pipe:2","-f","null","-"
-  ],{logger,phase:"MP4 完整解码校验"});
+  ],{logger,phase:"MP4 完整解码校验",signal});
   if(!checked.frame)throw new Error("MP4 校验失败：没有检测到有效视频帧。");
   const size=fs.statSync(partialPath).size;
   const durationSeconds=Number((checked.outTimeSeconds>0?checked.outTimeSeconds:checked.frame/fps).toFixed(3));
 
   // 只有完整转码并解码校验成功后，才替换正式输出文件。
+  throwIfAborted(signal);
   const backupPath=outputPath+".previous-"+process.pid+"-"+Date.now();
   const hadPrevious=fs.existsSync(outputPath);
   if(hadPrevious)fs.renameSync(outputPath,backupPath);
@@ -204,6 +227,7 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
    catch(cleanupError){logger?.warn("旧视频备份清理失败",{message:cleanupError.message});}
   }
   logger?.info("MP4 输出校验通过",{width,height,fps,durationSeconds,sizeBytes:size,frames:checked.frame,encodedFrames:converted.frame});
+  onCommitted({frames:checked.frame,durationSeconds,size});
   return {
    frames:checked.frame,
    durationSeconds,
@@ -218,8 +242,8 @@ async function transcodeRecordedVideo({inputPath,outputPath,musicPath,fps,width,
  }
 }
 
-async function encodeLiveFrames({frames,outputPath,fps,profile,logger}){
- return runFfmpeg(["-y","-hide_banner","-loglevel","error","-threads","2","-probesize","32","-analyzeduration","0","-fpsprobesize","0","-f","image2pipe","-framerate",String(fps),"-vcodec","mjpeg","-i","pipe:0","-an",...profile.args,"-fps_mode","cfr","-progress","pipe:2",outputPath],{logger,phase:"连续 H.264 编码",inputFrames:frames,binary:profile.binary||ffmpegPath});
+async function encodeLiveFrames({frames,outputPath,fps,profile,logger,signal}){
+ return runFfmpeg(["-y","-hide_banner","-loglevel","error","-threads","2","-probesize","32","-analyzeduration","0","-fpsprobesize","0","-f","image2pipe","-framerate",String(fps),"-vcodec","mjpeg","-i","pipe:0","-an",...profile.args,"-fps_mode","cfr","-progress","pipe:2",outputPath],{logger,phase:"连续 H.264 编码",inputFrames:frames,binary:profile.binary||ffmpegPath,signal});
 }
 module.exports={transcodeRecordedVideo,transcodeFrameStream,encodeLiveFrames,ffmpegPath};
 

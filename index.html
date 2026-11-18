@@ -252,8 +252,11 @@
           </section>
 
           <div class="export-action">
-            <button id="export-button" class="primary-button" type="submit"><span class="button-icon">▶</span> 开始播放并导出 MP4</button>
-            <p>导出期间请保持本地服务运行。</p>
+            <div class="export-action-buttons">
+              <button id="export-button" class="primary-button" type="submit"><span class="button-icon">▶</span> 开始播放并导出 MP4</button>
+              <button id="stop-export-button" class="danger-button" type="button" hidden disabled>停止导出</button>
+            </div>
+            <p>导出期间请保持本地服务运行；停止任务不会关闭本地服务。</p>
           </div>
         </form>
 
@@ -280,8 +283,14 @@
         </section>
 
         <section id="history-section" class="history-panel">
-          <div class="history-heading"><div><span class="panel-kicker">RECENT EXPORTS</span><h3>最近导出记录</h3></div><button id="refresh-history" class="text-button" type="button">刷新</button></div>
-          <p class="history-hint">自动保存最近 100 次任务，可下载对应诊断日志。</p>
+          <div class="history-heading">
+            <div><span class="panel-kicker">RECENT EXPORTS</span><h3>最近导出记录</h3></div>
+            <div class="history-heading-actions">
+              <button id="refresh-history" class="text-button" type="button">刷新</button>
+              <button id="clear-history" class="text-button danger-text-button" type="button" disabled>清空全部</button>
+            </div>
+          </div>
+          <p class="history-hint">单条删除或清空全部记录时，会同步清理对应诊断日志；不会删除 output 目录中的 MP4 成片。</p>
           <div id="history-list" class="history-list"><span class="history-empty">正在读取历史记录……</span></div>
         </section>
       </div>
