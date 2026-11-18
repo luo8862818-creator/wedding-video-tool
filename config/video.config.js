@@ -9,7 +9,7 @@ module.exports = {
   codec: "libx264",
   preset: "veryfast",
   crf: 18,
-  threads: 2,
+  threads: "auto",
   audioCodec: "aac",
   audioBitrate: "192k"
 };

@@ -3,6 +3,7 @@ const path=require("node:path");
 const {spawn}=require("node:child_process");
 const {performance}=require("node:perf_hooks");
 const config=require("../config/video.config");
+const {threadConfig}=require('./encoder-profile');
 
 function makeAbortError(signal){
  const error=new Error(signal?.reason?.message||"导出任务已停止。");
@@ -68,7 +69,7 @@ async function probeEncoder(binary,profile,{width,height,fps,directory,sample,si
  const output=path.join(directory,"probe-"+profile.name+".mp4");
  try{return await new Promise((resolve,reject)=>{
   if(signal?.aborted){reject(makeAbortError(signal));return;}
-  const input=sample?["-threads","2","-probesize","32","-analyzeduration","0","-fpsprobesize","0","-f","image2pipe","-framerate",String(fps),"-vcodec","mjpeg","-i","pipe:0"]:["-f","lavfi","-i",`testsrc2=size=${width}x${height}:rate=${fps}`];
+  const input=sample?["-threads",threadConfig().threadValue,"-probesize","32","-analyzeduration","0","-fpsprobesize","0","-f","image2pipe","-framerate",String(fps),"-vcodec","mjpeg","-i","pipe:0"]:["-f","lavfi","-i",`testsrc2=size=${width}x${height}:rate=${fps}`];
   const child=spawn(profile.binary||binary,["-y","-v","error",...input,"-frames:v","30","-an",...profile.args,output],{windowsHide:true,stdio:[sample?"pipe":"ignore","ignore","ignore"]});
   let settled=false;
   const finish=(error,value)=>{
@@ -92,7 +93,7 @@ async function probeEncoder(binary,profile,{width,height,fps,directory,sample,si
 async function makeProbeImage(binary,{width,height,signal}){
  return new Promise((resolve,reject)=>{
   if(signal?.aborted){reject(makeAbortError(signal));return;}
-  const chunks=[];const child=spawn(binary,["-v","error","-f","lavfi","-i",`testsrc2=size=${width}x${height}`,"-frames:v","1","-c:v","mjpeg","-q:v","3","-threads","2","-f","image2pipe","pipe:1"],{windowsHide:true,stdio:["ignore","pipe","ignore"]});
+  const chunks=[];const child=spawn(binary,["-v","error","-f","lavfi","-i",`testsrc2=size=${width}x${height}`,"-frames:v","1","-c:v","mjpeg","-q:v","3","-threads",threadConfig().threadValue,"-f","image2pipe","pipe:1"],{windowsHide:true,stdio:["ignore","pipe","ignore"]});
   let settled=false;
   const finish=(error,value)=>{
    if(settled)return;settled=true;clearTimeout(timer);
@@ -115,15 +116,15 @@ async function selectEncoder(binary,options){
  const {signal}=options;
  throwIfAborted(signal);
  const fallback=process.env.FFMPEG_SOFTWARE_PATH||require("ffmpeg-static");
- const software={name:"libx264",kind:"software",binary:fs.existsSync(fallback||"")?fallback:binary,args:["-c:v","libx264","-preset",config.preset||"veryfast","-crf",String(config.crf??18),"-threads",String(config.threads||2),"-pix_fmt","yuv420p"]};
+ const software={name:"libx264",kind:"software",binary:fs.existsSync(fallback||"")?fallback:binary,args:["-c:v","libx264","-preset",config.preset||"veryfast","-crf",String(config.crf??18),"-threads",threadConfig().threadValue,"-pix_fmt","yuv420p"]};
  const hardware=[
   {name:"h264_nvenc",kind:"hardware",args:["-c:v","h264_nvenc","-preset","p4","-cq","18","-b:v","0","-pix_fmt","yuv420p"]},
   {name:"h264_qsv",kind:"hardware",args:["-c:v","h264_qsv","-preset","veryfast","-global_quality","18","-pix_fmt","nv12"]},
   {name:"h264_amf",kind:"hardware",args:["-c:v","h264_amf","-quality","speed","-rc","cqp","-qp_i","18","-qp_p","18","-pix_fmt","nv12"]}
  ];
  const requested=process.env.WEDDING_ENCODER||"auto";
- if(!["auto","software",...hardware.map(p=>p.name)].includes(requested))throw Error("未知的 WEDDING_ENCODER："+requested);
- const candidates=requested==="software"?[software]:requested==="auto"?[software,...hardware]:[...hardware.filter(p=>p.name===requested),software];
+ if(!["auto","software","hardware",...hardware.map(p=>p.name)].includes(requested))throw Error("未知的 WEDDING_ENCODER："+requested);
+ const candidates=requested==="software"?[software]:requested==="auto"?[software,...hardware]:requested==='hardware'?[...hardware,software]:[...hardware.filter(p=>p.name===requested),software];
  const sample=await makeProbeImage(binary,options),probes=[],valid=[];
  throwIfAborted(signal);
  for(const profile of candidates){
@@ -135,7 +136,7 @@ async function selectEncoder(binary,options){
  if(!valid.length)throw Error("硬件及 libx264 编码探测均失败，请检查 FFMPEG_PATH 或 ffmpeg-static 安装");
  const fastest=valid.slice().sort((a,b)=>a.benchmarkMs-b.benchmarkMs)[0],cpu=valid.find(p=>p.kind==="software");
  // A small startup win on a synthetic image is not evidence of better sustained
- // capture. Prefer bounded two-thread x264 unless hardware has a clear margin.
+ // capture. Keep the legacy software preference unless hardware has a clear margin.
  const automatic=cpu&&fastest.kind==="hardware"&&fastest.benchmarkMs>cpu.benchmarkMs*.7?cpu:fastest;
  const chosen=requested==="auto"?automatic:valid[0];
  return {...chosen,probes};

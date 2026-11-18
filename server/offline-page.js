@@ -1,6 +1,7 @@
 // Runs inside every document, including invitation iframes. Native image/media
 // decoders have a separate clock; Playwright Clock alone does not seek them.
 function installOfflinePage() {
+ const nativeNow=performance.now.bind(performance);
  const tracks=new Map(),animationStarts=new WeakMap(),videoTimes=new WeakMap(),uncontrolled=[];
  let encodedBytes=0,decodedPixels=0;
  function releaseTrack(track){
@@ -121,6 +122,7 @@ function installOfflinePage() {
   return states;
  }
  window.__offlinePage={
+  now:nativeNow,
   async prepare({clock=false,playerOwned=false}={}){
    clockMode=clock;
    clockOrigin=performance.now();

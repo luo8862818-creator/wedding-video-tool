@@ -4,6 +4,7 @@ const path=require("node:path");
 const express=require("express");
 const http=require("node:http");
 const {performance}=require("node:perf_hooks");
+const {validateFrameFormat}=require('./frame-format');
 const {chromium}=require("playwright");
 const {transcodeRecordedVideo,transcodeFrameStream,encodeLiveFrames,ffmpegPath}=require("./ffmpeg");
 const {CaptureQueue,selectEncoder}=require("./live-capture");
@@ -366,7 +367,7 @@ async function findDeterministicPlayerFrame(page,timeoutMs=20000){
  return null;
 }
 
-async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress,signal,renderFrame,onFrame=()=>{}}){
+async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProgress,signal,renderFrame,onFrame=()=>{},capture={format:'png',quality:null},packets=false}){
  const progressInterval=Math.max(1,Math.round(fps));
  const session=await page.context().newCDPSession(page);
  try{
@@ -395,16 +396,22 @@ async function* createDeterministicFrameStream({page,frame,fps,frameCount,onProg
   });
   }
   // Lossless PNG; skip compression work without changing the pixels.
-  const shot=await session.send("Page.captureScreenshot",{format:"png",captureBeyondViewport:false,optimizeForSpeed:true});
+  const screenshotStarted=performance.now();
+  const shot=await session.send("Page.captureScreenshot",{format:capture.format,captureBeyondViewport:false,optimizeForSpeed:true,...(capture.quality===null?{}:{quality:capture.quality})});
+  const screenshotMs=performance.now()-screenshotStarted;
+  const decodeStarted=performance.now();
   const image=Buffer.from(shot.data,"base64");
-  onFrame({buffer:image,index,timeMs,state:frameState,elapsedMs:performance.now()-frameStarted});
+  const base64DecodeMs=performance.now()-decodeStarted;
+  validateFrameFormat(image,capture.format,capture);
+  const diagnostic={frameIndex:index,timelineMs:timeMs,...frameState?.timings,screenshotMs,base64DecodeMs,imageDataBytes:image.length,frameBytes:image.length};
+  onFrame({buffer:image,index,timeMs,state:frameState,elapsedMs:performance.now()-frameStarted,diagnostic});
   if(index%progressInterval===0||index===frameCount-1){
    const progress=6+((index+1)/frameCount)*72;
    onProgress(progress,"逐帧渲染邀请函",
     "已渲染 "+(index+1)+"/"+frameCount+" 帧 · "+(timeMs/1000).toFixed(1)+" 秒",
     {renderedFrames:index+1,expectedFrames:frameCount,frameTimeMs:Number(timeMs.toFixed(2))});
   }
-  yield image;
+  yield packets?{buffer:image,diagnostic,startedAt:frameStarted}:image;
  }
  }finally{await session.detach().catch(()=>{});}
 }

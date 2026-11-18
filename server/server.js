@@ -320,6 +320,26 @@ app.use((error,req,res,next)=>{
  res.status(status).json({error:message});
 });
 
-app.listen(PORT,HOST,()=>{
- serverLogger.info("Wedding Video Tool 已启动",{address:"http://"+HOST+":"+PORT,outputDir:OUTPUT_DIR,logDir:LOG_DIR});
-});
+function reportStartupError(error){
+ const message=error.code==="EADDRINUSE"
+  ?"端口 "+PORT+" 已被占用，服务未启动。请关闭旧服务窗口，或设置其他 PORT 后重新启动。"
+  :error.code==="EACCES"
+   ?"没有权限监听 "+HOST+":"+PORT+"，请检查端口权限或设置其他 PORT。"
+   :"服务启动失败："+error.message;
+ console.error("[Wedding Video Tool] "+message);
+ serverLogger.error("Wedding Video Tool 启动失败",{code:error.code||error.name,message,host:HOST,port:PORT});
+ process.exitCode=1;
+ // Flush the error log; a failed listener must not look like a successful npm run.
+ void serverLogger.close();
+}
+try{
+ if(!Number.isInteger(PORT)||PORT<0||PORT>65535)throw new Error("PORT 必须是 0～65535 的整数");
+ const listener=app.listen(PORT,HOST,error=>{
+  // Express 5 invokes the callback on listen errors as well as on success.
+  if(error){reportStartupError(error);return;}
+  const actualPort=listener.address().port;
+  const address="http://"+HOST+":"+actualPort;
+  console.log("[Wedding Video Tool] 已启动："+address+"（PID "+process.pid+"，按 Ctrl+C 停止）");
+  serverLogger.info("Wedding Video Tool 已启动",{address,pid:process.pid,outputDir:OUTPUT_DIR,logDir:LOG_DIR});
+ });
+}catch(error){reportStartupError(error);}

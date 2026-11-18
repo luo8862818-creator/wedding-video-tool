@@ -7,9 +7,9 @@ Windows 本地 HTML 婚礼邀请函视频导出工具。Playwright 按指定视�
 1. 导入 HTML/完整项目，或填写本机 index.html 路径。导出期间暂停工具自己的实时预览，避免同时运行两份邀请函。
 2. 默认全部使用离线逐帧导出。优先使用声明了 `wedding-video-capture=deterministic` 的播放器 `renderAt/renderCapture/ready/totalMs`；普通网页使用 Playwright Clock，必须通过 `meta name="wedding-video-duration-ms" content="5000"` 或 `player.totalMs` 声明时长。无法控制的动画或未知结束时间会报告原因，绝不自动退回实时录屏。`WEDDING_CAPTURE_MODE=live` 仅用于显式选择旧录制路径。
 3. 第 n 帧固定对应 `n × 1000 / FPS` 毫秒，按顺序定位并截图，不按电脑实际渲染速度跳帧。PNG 经带背压的管道送入 FFmpeg，不堆积全部帧、不落盘 PNG 序列。
-4. 使用 H.264 / veryfast / CRF 18 / 两线程编码，输入帧率直接决定时间戳，不再经过 FPS 补帧滤镜。保留原有分辨率和 FPS 选项。
+4. 默认使用 H.264 / veryfast / CRF 18 / 自动线程编码。原生尺寸仅设置 SAR，不重复 scale/pad。输入帧率直接决定时间戳，不经过 FPS 补帧滤镜。单页面渲染生产者和 FFmpeg 消费者通过默认 4 帧、最多 16 帧的有界队列重叠运行。
 5. 背景音乐从视频零时刻开始，循环并在视频结束时间截断。完成严格帧数检查与完整解码校验后，才替换正式 MP4。
-6. 日志记录渲染/编码帧数、渲染耗时、视频时长、输出参数、管道背压和连续重复帧。重复帧区分结束停留、运动状态变化和未知静止，不把正常停留判成错误。
+6. 日志拆分 renderAt、renderCapture、媒体同步、截图、Base64 解码、队列等待、管道写入和 drain，提供百分位、六个时间点、异常帧和保守的瓶颈判断。重复帧区分结束停留、运动状态变化和未知静止。FFmpeg wall time 包含输入等待，不当作纯编码 CPU 耗时。
 
 GIF / 动态 WebP / APNG 使用 ImageDecoder 按帧时长定位；视频需通过 autoplay 或 data-capture-start-ms 指定时间起点。CSS 背景动图、SVG SMIL、实时媒体和未受控 Worker 等会报告具体限制，不能当成已经支持。播放器接口模式由页面负责自定义 Canvas 的确定性绘制。
 
@@ -71,19 +71,29 @@ npm start
 
 ## 编码器与排查选项
 
-离线模式默认使用软件 H.264，旧实时模式保留编码器自动选择。Windows PowerShell 可在启动服务前设置：
+离线模式默认使用软件 H.264；检测到硬件不会自动切换。旧实时模式保留原有自动选择行为。可配置项：
+
+- `WEDDING_FFMPEG_THREADS=auto`（默认）或 `1`～`256`。
+- `WEDDING_FRAME_FORMAT=png`（默认）、`webp` 或 `jpeg`；后两者为显式画质实验，不自动成为默认。`WEDDING_FRAME_QUALITY` 默认 100。
+- `WEDDING_FRAME_QUEUE_SIZE=4`（默认），范围 1～16，另有 64 MiB 队列字节上限。
+- `WEDDING_ENCODER=auto`、`software`、`hardware` 或具体编码器名。auto 保持 libx264；显式硬件先进行合成素材探测，真实编码/完整校验失败时从零重建页面回退软件。
+- `WEDDING_FFMPEG_PROFILE=1` 收集 benchmark_all 解码计时。未启用或 FFmpeg 未提供计时则记录 null，不估算内部耗时。
+
+Windows PowerShell 可在启动服务前设置：
 
 ```powershell
 # 直接使用已安装的 Chrome，可免下载独立 Chromium
 $env:WEDDING_BROWSER_CHANNEL = "chrome"
-# 若驱动在真实录制中不稳定，强制使用限制两线程的软件编码
+# 显式使用软件编码；线程数默认自动
 $env:WEDDING_ENCODER = "software"
 npm start
 ```
 
-`WEDDING_ENCODER` 也接受 `auto`、`h264_qsv`、`h264_nvenc`、`h264_amf`。指定硬件不可用时仍探测软件后备。可用 `FFMPEG_PATH` 指定主 FFmpeg，`FFMPEG_SOFTWARE_PATH` 指定带 libx264 的后备 FFmpeg；默认使用 ffmpeg-static。
+具体编码器名支持 `libx264`、`h264_qsv`、`h264_nvenc`、`h264_amf`、`h264_mf`。编译支持和运行时验证分别记录，合成素材通过不代表真实页面或所有播放器画质已经验收。可用 `FFMPEG_PATH` 指定主 FFmpeg，`FFMPEG_SOFTWARE_PATH` 指定 libx264 后备；默认使用 ffmpeg-static。
 
-硬件/软件选择使用同尺寸的 30 张 JPEG 测试画面及真实 MP4 输出。它是启动探测，不能保证所有驱动在复杂长片中表现相同。编码队列超过约两秒/32 MiB 的界限时会停止并提示，避免悄悄生成已经丢帧的成片。正常静止段需要重复帧，这本身不是故障。
+旧实时模式仍使用自己的 JPEG 编码探测和丢帧保护。离线队列满时暂停生产者，不丢弃帧。drain 次数可能仍等于帧数，是否是瓶颈应结合实际等待耗时和队列阻塞判断。
+
+`scripts/benchmark-export.js` 是手动 Benchmark 入口（npm script 名称 `benchmark`），正常导出不会运行它。它在同一路径、时间轴、FPS、视口下比较 PNG/WebP/JPEG，可选比较软件/硬件编码；完整校验后比较最终 MP4 的 SSIM/PSNR，记录速度、图像字节数、解码计时及 PNG 回退。不会自动改变默认格式或替代人工观感验收。
 
 无需设置 WEDDING_CAPTURE_MODE 即默认离线导出。只有显式设置 live 才使用旧实时录制；声明必须确定性导出的网页会拒绝 live。
 
